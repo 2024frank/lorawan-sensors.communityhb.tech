@@ -1,3 +1,5 @@
+import { readStored, TOKEN_KEY } from "@/lib/storage";
+
 export type Role = "admin" | "manager" | "viewer";
 export type Status = "online" | "offline" | "never" | "active";
 export type User = { id: string; name: string; email: string; role: Role; lastActiveAt?: string; mustChangePassword?: boolean };
@@ -28,7 +30,7 @@ export class ApiError extends Error {
 }
 
 function authToken() {
-  return typeof window === "undefined" ? null : window.localStorage.getItem("fieldline_token");
+  return typeof window === "undefined" ? null : readStored(TOKEN_KEY);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

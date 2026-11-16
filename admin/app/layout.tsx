@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: { default: "Fieldline Operator", template: "%s · Fieldline Operator" },
+  title: { default: "LoRaWAN Operator", template: "%s · LoRaWAN Operator" },
   description: "Operator console: onboard organizations and provision their people.",
   icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
   robots: { index: false, follow: false },

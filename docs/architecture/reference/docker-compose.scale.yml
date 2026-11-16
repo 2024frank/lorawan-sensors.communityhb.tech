@@ -22,7 +22,7 @@ services:
       replicas: 3
       resources: { limits: { cpus: "1", memory: 512M } }
     environment:
-      - DATABASE_URL=postgres://fieldline:${DB_PASS}@postgres:5432/fieldline
+      - DATABASE_URL=postgres://lorawan:${DB_PASS}@postgres:5432/lorawan
       - REDIS_URL=redis://redis:6379
       - NATS_URL=nats://nats:4222
       - JWT_SECRET=${JWT_SECRET}
@@ -34,7 +34,7 @@ services:
     command: node ingest-worker.js
     deploy: { replicas: 2 }
     environment:
-      - DATABASE_URL=postgres://fieldline:${DB_PASS}@postgres:5432/fieldline
+      - DATABASE_URL=postgres://lorawan:${DB_PASS}@postgres:5432/lorawan
       - REDIS_URL=redis://redis:6379
       - NATS_URL=nats://nats:4222
     depends_on: [postgres, redis, nats]
@@ -50,8 +50,8 @@ services:
   postgres:                       # control plane + TimescaleDB telemetry
     image: timescale/timescaledb:latest-pg16
     environment:
-      - POSTGRES_DB=fieldline
-      - POSTGRES_USER=fieldline
+      - POSTGRES_DB=lorawan
+      - POSTGRES_USER=lorawan
       - POSTGRES_PASSWORD=${DB_PASS}
     volumes:
       - pgdata:/var/lib/postgresql/data

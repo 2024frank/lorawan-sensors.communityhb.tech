@@ -7,6 +7,6 @@ export function Brand({ compact = false, inverse = false, className }: { compact
       <div className="absolute inset-px rounded-[12px] border border-white/20"/>
       <RadioTower size={20} strokeWidth={2.2}/>
     </div>
-    {!compact && <div className="leading-none"><div className={cn("text-[17px] font-semibold tracking-[-.045em]", inverse && "text-white")}>Fieldline<span className="text-emerald-400"> One</span></div><div className={cn("mt-1.5 text-[9px] font-semibold uppercase tracking-[.19em] text-[var(--muted)]", inverse && "text-white/50")}>LoRaWAN operations</div></div>}
+    {!compact && <div className="leading-none"><div className={cn("text-[17px] font-semibold tracking-[-.045em]", inverse && "text-white")}>LoRaWAN<span className="text-emerald-400"> Console</span></div><div className={cn("mt-1.5 text-[9px] font-semibold uppercase tracking-[.19em] text-[var(--muted)]", inverse && "text-white/50")}>Community Hub</div></div>}
   </div>;
 }

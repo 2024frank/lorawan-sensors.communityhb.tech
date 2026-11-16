@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Bell, Boxes, ChevronDown, Database, Gauge, LogOut, Menu, Moon, PlugZap, RadioTower, Settings, Sun, Users, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { clearStored, readStored, THEME_KEY, TOKEN_KEY } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 import { Button, Skeleton } from "@/components/ui/primitives";
 import { Brand } from "@/components/brand";
@@ -28,16 +29,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dark, setDark] = useState(false);
   const [token, setToken] = useState<string | null>();
-  useEffect(() => { const stored = localStorage.getItem("fieldline_token"); setToken(stored); if (!stored) router.replace("/login"); }, [router]);
+  useEffect(() => { const stored = readStored(TOKEN_KEY); setToken(stored); if (!stored) router.replace("/login"); }, [router]);
   const me = useQuery({ queryKey: ["me"], queryFn: api.me, enabled: Boolean(token) });
   // first login: no wandering off until the temporary password is changed
   useEffect(() => { if (me.data?.mustChangePassword && pathname !== "/onboarding") router.replace("/onboarding"); }, [me.data, pathname, router]);
   const alerts = useQuery({ queryKey: ["alerts"], queryFn: api.alerts, enabled: Boolean(token), refetchInterval: 60_000 });
   const alertCount = alerts.data?.items.length ?? 0;
-  useEffect(() => { const value = localStorage.getItem("fieldline_theme") === "dark"; setDark(value); document.documentElement.classList.toggle("dark", value); document.documentElement.classList.toggle("light", !value); }, []);
+  useEffect(() => { const value = readStored(THEME_KEY) === "dark"; setDark(value); document.documentElement.classList.toggle("dark", value); document.documentElement.classList.toggle("light", !value); }, []);
 
-  function toggleTheme() { const next = !dark; setDark(next); localStorage.setItem("fieldline_theme", next ? "dark" : "light"); document.documentElement.classList.toggle("dark", next); document.documentElement.classList.toggle("light", !next); }
-  async function logout() { await api.logout().catch(() => null); localStorage.removeItem("fieldline_token"); router.replace("/login"); }
+  function toggleTheme() { const next = !dark; setDark(next); localStorage.setItem(THEME_KEY, next ? "dark" : "light"); document.documentElement.classList.toggle("dark", next); document.documentElement.classList.toggle("light", !next); }
+  async function logout() { await api.logout().catch(() => null); clearStored(TOKEN_KEY); router.replace("/login"); }
   if (!token) return null;
 
   const sidebar = <>

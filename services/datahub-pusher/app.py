@@ -55,7 +55,7 @@ def push(reading: dict) -> bool:
             return False, str(ex)
 
     # style 1: multipart file upload (field name "file"), the common "upload csv" shape
-    boundary = "----fieldline" + str(int(time.time()))
+    boundary = "----lorawan" + str(int(time.time()))
     part = (f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="file"; filename="{eui}.csv"\r\n'
             f"Content-Type: text/csv\r\n\r\n{csv_body}\r\n--{boundary}--\r\n").encode()

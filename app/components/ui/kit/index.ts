@@ -1,4 +1,4 @@
-// Fieldline UI kit — reusable, accessible building blocks.
+// LoRaWAN console UI kit — reusable, accessible building blocks.
 // One import surface so screens pull from `@/components/ui/kit`, not deep paths.
 export { QueryState, SkeletonList } from "./query-state";
 export type { QueryStateProps } from "./query-state";

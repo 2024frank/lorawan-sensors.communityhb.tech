@@ -5,7 +5,21 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
-const DATA_PATH = process.env.DATA_PATH ?? "/data/fieldline.json";
+// Before the product was renamed this file was called fieldline.json. A server
+// that already has one keeps using it (nothing is moved, so rolling back still
+// finds the data); a new install starts with lorawan.json.
+const LEGACY_FILE = "fieldline.json";
+function dataPath(): string {
+  const wanted = process.env.DATA_PATH ?? "/data/lorawan.json";
+  if (fs.existsSync(wanted)) return wanted;
+  const legacy = path.join(path.dirname(wanted), LEGACY_FILE);
+  if (fs.existsSync(legacy)) {
+    console.log(`store: ${wanted} not found, using existing ${legacy}`);
+    return legacy;
+  }
+  return wanted;
+}
+const DATA_PATH = dataPath();
 
 export type Role = "admin" | "manager" | "viewer";
 export type AppUser = {

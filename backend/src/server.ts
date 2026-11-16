@@ -1,4 +1,4 @@
-// Fieldline backend v3: multi-tenant. Each organization (school) maps to one
+// LoRaWAN backend v3: multi-tenant. Each organization (school) maps to one
 // ChirpStack tenant; users carry orgId and every endpoint is scoped to the
 // caller's org. Platform admins (the operator) onboard new orgs with POST
 // /orgs, which creates the tenant, its application, clones the sensor-type
@@ -23,8 +23,10 @@ const PLATFORM_ADMINS = (process.env.PLATFORM_ADMINS ?? "admin").split(",").map(
 const app = new Hono();
 // Browser CORS restricted to our own front-ends. The public data API is
 // machine-to-machine (x-api-key), so it isn't affected by this.
+// The two *.vercel.app hosts are the live deployments' original addresses from
+// before the product was renamed; they stay allowed until those projects move.
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS ??
-  "https://your-app-domain,https://your-admin-domain,https://fieldline-tau.vercel.app,https://fieldline-admin.vercel.app,http://localhost:3000,http://localhost:3100").split(",");
+  "https://your-app-domain,https://your-admin-domain,https://lorawan-sensors.communityhb.tech,https://fieldline-tau.vercel.app,https://fieldline-admin.vercel.app,http://localhost:3000,http://localhost:3100").split(",");
 app.use("*", cors({ origin: (o) => (o && ALLOWED_ORIGINS.includes(o) ? o : ""), credentials: false }));
 
 // ── brute-force throttle (per-node; Redis-backed at multi-node, see ARCHITECTURE) ──
@@ -79,9 +81,11 @@ async function tenantInfo(tenantId: string): Promise<Org> {
   const hit = orgCache.get(tenantId);
   if (hit && Date.now() - hit.at < 60_000) return hit.org;
   const t = (await cs<any>("GET", `/api/tenants/${tenantId}`)).tenant;
+  // An org's application is found by tenant, never by name, so orgs created before
+  // the rename (whose application is named "fieldline") keep working as they are.
   let apps = (await cs<any>("GET", `/api/applications?limit=1&tenantId=${tenantId}`)).result ?? [];
   if (!apps.length) {
-    const created = await cs<any>("POST", "/api/applications", { application: { name: "fieldline", tenantId, description: "Created by Fieldline" } });
+    const created = await cs<any>("POST", "/api/applications", { application: { name: "lorawan", tenantId, description: "Created by the LoRaWAN console" } });
     apps = [{ id: created.id }];
   }
   const org = { tenantId, tenantName: t.name, appId: apps[0].id };
@@ -271,12 +275,12 @@ app.post("/orgs", async (c) => {
     if (db.users.some(u => u.email === email)) return c.json({ error: "A user with this email already exists" }, 400);
     // 1. tenant
     const tid = (await cs<any>("POST", "/api/tenants", { tenant: {
-      name: orgName, description: "Created by Fieldline",
+      name: orgName, description: "Created by the LoRaWAN console",
       canHaveGateways: true, maxGatewayCount: 0, maxDeviceCount: 0,
       privateGatewaysUp: true, privateGatewaysDown: true,
     } })).id;
     // 2. application
-    await cs("POST", "/api/applications", { application: { name: "fieldline", tenantId: tid, description: "Created by Fieldline" } });
+    await cs("POST", "/api/applications", { application: { name: "lorawan", tenantId: tid, description: "Created by the LoRaWAN console" } });
     // 3. clone the sensor-type catalog from the template (first) tenant
     const template = await defaultTenant();
     const profiles = (await cs<any>("GET", `/api/device-profiles?limit=100&tenantId=${template}`)).result ?? [];
@@ -305,6 +309,9 @@ app.post("/orgs", async (c) => {
 });
 
 // ---------- platform operators (who can onboard schools) ----------
+// The operator console's live address still has the product's old name in it.
+// It stays the default so the link in operator emails keeps working; set
+// ADMIN_URL to point the emails somewhere else.
 const ADMIN_URL = process.env.ADMIN_URL ?? "https://fieldline-admin.vercel.app";
 app.get("/operators", (c) => {
   const me = authUser(c)!; if (!isPlatformAdmin(me)) return c.json({ error: "platform admins only" }, 403);
@@ -432,7 +439,7 @@ app.post("/gateways", async (c) => {
     await cs("POST", "/api/gateways", { gateway: {
       gatewayId: String(eui).toLowerCase(), name, tenantId: org.tenantId, statsInterval: 30,
       downlinkPriority: 1, // ChirpStack rejects creates without it (undocumented)
-      description: "Registered via Fieldline",
+      description: "Registered via the LoRaWAN console",
       location: location ? { latitude: location.lat, longitude: location.lng } : undefined,
     } });
     return c.json({
@@ -467,6 +474,10 @@ app.delete("/gateways/:eui", async (c) => {
 // short TTL; invalidated on create. 13 upstream calls per load -> ~zero.
 const typeCache = new Map<string, { items: unknown[]; at: number }>();
 const TYPE_TTL = 60_000;
+// Default description for a custom type. Types made before the product was renamed
+// were saved with the old name in it, so that wording is swapped when read back.
+const TYPE_DESCRIPTION = "Custom device type created in the LoRaWAN console";
+const LEGACY_TYPE_DESCRIPTION = "Custom device type created via Fieldline";
 app.get("/device-types", async (c) => {
   const org = await orgOf(authUser(c)!);
   const hit = typeCache.get(org.tenantId);
@@ -475,7 +486,7 @@ app.get("/device-types", async (c) => {
   const items = await Promise.all((r.result ?? []).map(async (p: any) => {
     const full = (await cs<any>("GET", `/api/device-profiles/${p.id}`)).deviceProfile;
     const meas = Object.values(full.measurements ?? {}).map((m: any) => ({ name: m.name, unit: "" }));
-    return { id: p.id, name: p.name, region: full.region, lorawanVersion: full.macVersion, class: full.supportsClassC ? "C" : "A", measurements: meas, hasDecoder: Boolean(full.payloadCodecScript), description: full.description ?? "" };
+    return { id: p.id, name: p.name, region: full.region, lorawanVersion: full.macVersion, class: full.supportsClassC ? "C" : "A", measurements: meas, hasDecoder: Boolean(full.payloadCodecScript), description: full.description === LEGACY_TYPE_DESCRIPTION ? TYPE_DESCRIPTION : full.description ?? "" };
   }));
   typeCache.set(org.tenantId, { items, at: Date.now() });
   return c.json({ items });
@@ -483,7 +494,7 @@ app.get("/device-types", async (c) => {
 // Starter decoder for custom/DIY devices: passes raw bytes through so the
 // device shows up with SOMETHING, and documents how to write a real one.
 const STARTER_DECODER = `// ChirpStack v4 decoder. Return { data: {...} } — each key becomes a
-// measurement shown in Fieldline (e.g. temperature, do_ppm, battery).
+// measurement shown in the console (e.g. temperature, do_ppm, battery).
 function decodeUplink(input) {
   var b = input.bytes; // array of payload bytes from your device
   return {
@@ -509,7 +520,7 @@ app.post("/device-types", async (c) => {
       macVersion, regParamsRevision: macVersion === "LORAWAN_1_0_4" ? "RP002_1_0_3" : "A",
       supportsOtaa: true, supportsClassC: body.class === "C",
       uplinkInterval: 1200, adrAlgorithmId: "default",
-      description: body.description || "Custom device type created via Fieldline",
+      description: body.description || TYPE_DESCRIPTION,
       payloadCodecRuntime: "JS",
       payloadCodecScript: decoder || STARTER_DECODER,
     } });
@@ -570,7 +581,7 @@ app.post("/devices", async (c) => {
     } else {
       appKey = randomHex(16); keySource = "generated";
     }
-    await cs("POST", "/api/devices", { device: { devEui, name, applicationId: org.appId, deviceProfileId: typeId, description: "Created via Fieldline" } });
+    await cs("POST", "/api/devices", { device: { devEui, name, applicationId: org.appId, deviceProfileId: typeId, description: "Created via the LoRaWAN console" } });
     // LoRaWAN 1.0.x: the AppKey must go in the nwkKey field (ChirpStack quirk)
     await cs("POST", `/api/devices/${devEui}/keys`, { deviceKeys: { devEui, nwkKey: appKey, appKey: "" } });
     euiCache.delete(org.appId);
@@ -864,7 +875,12 @@ function authHeaders(i: { authType?: string; secret?: string; username?: string;
   if (i.authType === "bearer" && i.secret) h["Authorization"] = `Bearer ${i.secret}`;
   if (i.authType === "api_key" && i.secret) h[i.headerName || "X-API-Key"] = i.secret;
   if (i.authType === "basic" && i.secret) h["Authorization"] = `Basic ${Buffer.from(`${i.username ?? ""}:${i.secret}`).toString("base64")}`;
-  if ((i.authType === "hmac" || i.signingEnabled) && i.secret) h["X-Fieldline-Signature"] = crypto.createHmac("sha256", i.secret).update(body).digest("hex");
+  if ((i.authType === "hmac" || i.signingEnabled) && i.secret) {
+    const signature = crypto.createHmac("sha256", i.secret).update(body).digest("hex");
+    h["X-LoRaWAN-Signature"] = signature;
+    // The same signature under the header's old name, for receivers set up before the rename.
+    h["X-Fieldline-Signature"] = signature;
+  }
   return h;
 }
 async function deliver(i: any, payload: object): Promise<{ ok: boolean; status: number; ms: number }> {
@@ -880,7 +896,7 @@ app.post("/integrations/test", async (c) => {
   const b = await c.req.json();
   if (b.type && b.type !== "webhook") return c.json({ error: "Webhook delivery is live today; other destination types are on the roadmap." }, 400);
   try { await assertPublicUrl(b.endpoint ?? ""); } catch (e) { return c.json({ error: (e as Error).message }, 400); }
-  const res = await deliver(b, { event: "integration.test", source: "fieldline", time: new Date().toISOString(), device: { eui: "24e124aabbccddee", name: "Sample sensor" }, measurements: { temperature: 22.5, humidity: 41.2 } });
+  const res = await deliver(b, { event: "integration.test", source: "lorawan", time: new Date().toISOString(), device: { eui: "24e124aabbccddee", name: "Sample sensor" }, measurements: { temperature: 22.5, humidity: 41.2 } });
   if (!res.ok) return c.json({ error: res.status ? `Endpoint answered HTTP ${res.status}` : "Endpoint unreachable (connection failed or timed out)" }, 400);
   return c.json({ ok: true, latencyMs: res.ms, message: `Endpoint answered HTTP ${res.status}` });
 });
@@ -889,7 +905,7 @@ app.post("/integrations/:id/test", async (c) => {
   const dflt = await defaultTenant();
   const i = store.get().integrations.find(x => x.id === c.req.param("id") && (x.orgId ?? dflt) === org.tenantId);
   if (!i) return c.json({ error: "not found" }, 404);
-  const res = await deliver(i, { event: "integration.test", source: "fieldline", time: new Date().toISOString(), device: { eui: "24e124aabbccddee", name: "Sample sensor" }, measurements: { temperature: 22.5, humidity: 41.2 } });
+  const res = await deliver(i, { event: "integration.test", source: "lorawan", time: new Date().toISOString(), device: { eui: "24e124aabbccddee", name: "Sample sensor" }, measurements: { temperature: 22.5, humidity: 41.2 } });
   if (!res.ok) return c.json({ error: res.status ? `Endpoint answered HTTP ${res.status}` : "Endpoint unreachable" }, 400);
   return c.json({ ok: true, latencyMs: res.ms, message: `Endpoint answered HTTP ${res.status}` });
 });
@@ -935,4 +951,4 @@ setInterval(async () => {
 app.get("/health", (c) => c.json({ ok: true }));
 
 serve({ fetch: app.fetch, port: PORT });
-console.log(`Fieldline backend v3 (multi-tenant) on http://localhost:${PORT}`);
+console.log(`LoRaWAN backend v3 (multi-tenant) on http://localhost:${PORT}`);
