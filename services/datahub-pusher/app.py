@@ -25,8 +25,22 @@ MQTT_HOST = os.environ.get("MQTT_HOST", "mosquitto")
 MQTT_USER = os.environ.get("MQTT_USER", "chirpstack")
 MQTT_PASS = os.environ.get("MQTT_PASS", "")
 PENDING = "/data/pending.jsonl"
+RETRY_INTERVAL = int(os.environ.get("RETRY_INTERVAL", "300"))
+RETRY_BATCH_SIZE = int(os.environ.get("RETRY_BATCH_SIZE", "25"))
+FAILURE_LOG_INTERVAL = int(os.environ.get("FAILURE_LOG_INTERVAL", "900"))
+_last_failure_log = {}
 
 def log(*a): print(*a, flush=True)
+
+def log_push_result(eui: str, style: str, info: str, ok: bool):
+    if ok:
+        log(f"push {eui} {style} -> {info}")
+        return
+    sig = (eui, style, info[:160])
+    now = time.time()
+    if now - _last_failure_log.get(sig, 0) >= FAILURE_LOG_INTERVAL:
+        _last_failure_log[sig] = now
+        log(f"push {eui} {style} -> {info} (repeated failures suppressed for {FAILURE_LOG_INTERVAL}s)")
 
 def push(reading: dict) -> bool:
     """POST one reading to Data Hub as a per-sensor CSV. True on success."""
@@ -55,17 +69,17 @@ def push(reading: dict) -> bool:
             return False, str(ex)
 
     # style 1: multipart file upload (field name "file"), the common "upload csv" shape
-    boundary = "----lorawan" + str(int(time.time()))
+    boundary = "----fieldline" + str(int(time.time()))
     part = (f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="file"; filename="{eui}.csv"\r\n'
             f"Content-Type: text/csv\r\n\r\n{csv_body}\r\n--{boundary}--\r\n").encode()
     ok, info = attempt(part, f"multipart/form-data; boundary={boundary}")
-    log(f"push {eui} multipart -> {info}")
+    log_push_result(eui, "multipart", info, ok)
     if ok:
         return True
     # style 2: raw CSV body
     ok, info = attempt(csv_body.encode(), "text/csv")
-    log(f"push {eui} raw-csv -> {info}")
+    log_push_result(eui, "raw-csv", info, ok)
     return ok
 
 def queue_pending(reading: dict):
@@ -74,26 +88,30 @@ def queue_pending(reading: dict):
 
 def retry_loop():
     while True:
-        time.sleep(60)
+        time.sleep(RETRY_INTERVAL)
         if not DATAHUB_URL or not os.path.exists(PENDING):
             continue
         lines = open(PENDING).read().splitlines()
         if not lines:
             continue
+        retrying = lines[:RETRY_BATCH_SIZE]
+        untouched = lines[RETRY_BATCH_SIZE:]
         remaining = []
-        for ln in lines:
+        for ln in retrying:
             try:
                 r = json.loads(ln)
             except Exception:
                 continue
             if not push(r):
                 remaining.append(ln)
+        failed_count = len(remaining)
+        remaining.extend(untouched)
         open(PENDING, "w").write("\n".join(remaining) + ("\n" if remaining else ""))
-        log(f"retry pass: {len(lines)-len(remaining)} sent, {len(remaining)} still pending")
+        log(f"retry pass: {len(retrying)-failed_count} sent, {len(remaining)} still pending")
 
 def on_connect(client, userdata, flags, rc):
     client.subscribe("application/+/device/+/event/up")
-    log(f"MQTT connected rc={rc}; watching {list(DEVICE_TOKENS)}; endpoint={'SET' if DATAHUB_URL else 'NOT SET (queueing)'}")
+    log(f"MQTT connected rc={rc}; watching {list(DEVICE_TOKENS)}; endpoint={'SET' if DATAHUB_URL else 'NOT SET (queueing)'}; retry_interval={RETRY_INTERVAL}s retry_batch_size={RETRY_BATCH_SIZE}")
 
 def on_message(client, userdata, msg):
     try:

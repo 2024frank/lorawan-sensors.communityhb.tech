@@ -39,8 +39,9 @@ schools' browsers          operator's browser
 - `backend/` — TypeScript, Hono. Talks to ChirpStack over gRPC-web + REST. Owns app users (scrypt hashes, JSON store on a volume), org lifecycle, device/gateway provisioning, tokens, webhook delivery worker, transactional email.
 - `app/` — the school-facing console (Next.js App Router, React Query, Tailwind).
 - `admin/` — the operator console: onboard organizations, add users to any org, manage who can operate the platform.
-- `services/datastore` — small Flask service subscribing to ChirpStack MQTT uplinks, storing decoded readings in SQLite, serving latest/history/CSV.
+- `services/datastore` — small Flask service subscribing to ChirpStack MQTT uplinks, storing decoded readings in SQLite, serving latest/history/CSV and the per-gateway receptions behind coverage sessions. It has no auth of its own, so keep it off the public internet; only the backend calls it.
 - `services/datahub-pusher` — optional: pushes each new reading as CSV to an external endpoint with per-device tokens (built for Community Hub's Data Hub).
+- `services/datahub-pusher/fieldline_push.py` — optional: uploads the readings of every sensor that has a Community Hub device token to Data Hub, oldest first, retrying a failed file after five minutes.
 - `deploy/` — docker-compose for the whole server stack behind Caddy (automatic HTTPS; works on a bare IP via sslip.io).
 
 ## Quick start
