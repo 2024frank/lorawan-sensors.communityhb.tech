@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000";
-const APP_URL = "https://your-app-domain";
+// The console schools sign in to. Set NEXT_PUBLIC_APP_URL when building, like NEXT_PUBLIC_API_BASE.
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://your-app-domain";
 
 type Org = { id: string; name: string; createdAt: string; users: number };
 type Me = { email: string; name: string; platformAdmin?: boolean };
