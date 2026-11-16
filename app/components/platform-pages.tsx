@@ -8,45 +8,150 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Activity, AlertTriangle, ArrowLeft, ArrowRight, Battery, Check, Clipboard, Clock3, Copy, Database, Download, ExternalLink, Eye, FileKey, Filter, Gauge, KeyRound, MapPin, MoreHorizontal, Plus, RadioTower, Search, ShieldCheck, Signal, SlidersHorizontal, Trash2, UserPlus, Users, Wifi, WifiOff, X } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, ArrowRight, Battery, Bell, Check, Clock3, Copy, Database, Download, FileKey, Gauge, KeyRound, MapPin, Plus, RadioTower, Search, ShieldCheck, Signal, SlidersHorizontal, Trash2, UserPlus, Users, Wifi, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
-import { api, API_BASE, type DeviceType, type Role } from "@/lib/api";
-import { formatMetric, relativeTime, units } from "@/lib/utils";
-import { Badge, Button, Card, CardContent, CardHeader, EmptyState, Input, Label, PageHeader, Select, Skeleton, StatusDot } from "@/components/ui/primitives";
-import { QueryState } from "@/components/ui/kit";
+import { api, API_BASE, type Role } from "@/lib/api";
+import { cn, formatMetric, relativeTime, units } from "@/lib/utils";
+import { BackLink, Badge, Button, ButtonLink, Card, CardContent, CardHeader, EmptyState, Input, Label, PageHeader, Select, Skeleton, StatusDot, Textarea } from "@/components/ui/primitives";
+import { QueryState, StatusBadge, type Status } from "@/components/ui/kit";
 
-const COLORS = ["#167a4b", "#3b82f6", "#d97706", "#8b5cf6"];
+/* Chart series in Community Hub's greens and earth tones; they read on white and on the dark theme. */
+const SERIES = ["#467d58", "#2f6f7d", "#b08a4f", "#7f9a3a"];
+const TICK = { fontSize: 12, fill: "var(--muted)" };
+const TOOLTIP = {
+  contentStyle: { borderRadius: 12, border: "1px solid var(--line)", background: "var(--paper)", color: "var(--ink)", fontSize: 13 },
+  labelStyle: { color: "var(--muted)" },
+};
+const TH = "px-5 py-3.5 text-left text-[0.875rem] font-semibold whitespace-nowrap text-ink";
+const TD = "px-5 py-4 align-middle";
 
-function LoadingCards({ count = 3 }: { count?: number }) { return <div className="grid gap-4 md:grid-cols-3">{Array.from({ length: count }).map((_, i) => <Skeleton key={i} className="h-32"/>)}</div>; }
-function Metric({ label, value, foot, icon }: { label: string; value: string | number; foot: string; icon: React.ReactNode }) { return <Card><CardContent className="pt-5"><div className="flex items-center justify-between"><p className="text-sm text-[var(--muted)]">{label}</p><div className="rounded-lg bg-[var(--surface-muted)] p-2 text-[var(--accent)]">{icon}</div></div><p className="mt-3 text-3xl font-semibold tracking-[-.04em]">{value}</p><p className="mt-1 text-xs text-[var(--muted)]">{foot}</p></CardContent></Card>; }
-function PanelTitle({ title, body, action }: { title: string; body?: string; action?: React.ReactNode }) { return <div><h2 className="font-semibold tracking-[-.02em]">{title}</h2>{body && <p className="mt-1 text-sm text-[var(--muted)]">{body}</p>}{action}</div>; }
-function Modal({ title, body, children, onClose }: { title: string; body: string; children: React.ReactNode; onClose: () => void }) { return <div className="fixed inset-0 z-50 grid place-items-center p-4"><button className="absolute inset-0 bg-black/45 backdrop-blur-sm" aria-label="Close dialog" onClick={onClose}/><Card role="dialog" aria-modal="true" className="relative z-10 w-full max-w-lg shadow-2xl"><CardHeader><PanelTitle title={title} body={body}/><Button variant="ghost" size="icon" onClick={onClose} aria-label="Close dialog"><X size={18}/></Button></CardHeader><CardContent>{children}</CardContent></Card></div>; }
-function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) { return <div><Label>{label}</Label>{children}{hint && <p className="mt-1.5 text-xs text-[var(--muted)]">{hint}</p>}</div>; }
-function tone(status: string) { return ["online", "active"].includes(status) ? "success" : status === "never" ? "warning" : "danger"; }
+/* The mock API calls a reporting sensor "active"; the backend calls it "online". */
+const isOnline = (status: string) => status === "online" || status === "active";
+function statusOf(status: string): Status {
+  return (["online", "active", "offline", "never"] as string[]).includes(status) ? (status as Status) : "idle";
+}
+
+function LoadingCards({ count = 3 }: { count?: number }) {
+  return <div className="grid grid-cols-1 gap-4 md:grid-cols-3">{Array.from({ length: count }).map((_, i) => <Skeleton key={i} className="h-36 rounded-[1.25rem]"/>)}</div>;
+}
+function Metric({ label, value, foot, icon }: { label: string; value: string | number; foot: string; icon: React.ReactNode }) {
+  return <Card className="p-5 sm:p-6">
+    <div className="flex items-center justify-between gap-3">
+      <p className="text-[0.9375rem] font-semibold text-ink">{label}</p>
+      <span className="grid size-10 shrink-0 place-items-center rounded-full bg-field text-pine [&_svg]:size-[1.125rem]" aria-hidden="true">{icon}</span>
+    </div>
+    <p className="mt-3 break-words text-[2rem] leading-tight font-semibold tracking-[-0.025em] text-pine tabular-nums">{value}</p>
+    <p className="mt-1.5 text-[0.875rem] text-muted">{foot}</p>
+  </Card>;
+}
+function PanelTitle({ title, body, action }: { title: string; body?: string; action?: React.ReactNode }) {
+  return <div className="min-w-0">
+    <h2 className="text-[1.1875rem] leading-snug tracking-[-0.016em]">{title}</h2>
+    {body && <p className="mt-1 text-[0.9375rem] leading-relaxed text-muted">{body}</p>}
+    {action}
+  </div>;
+}
+function Modal({ title, body, children, onClose }: { title: string; body: string; children: React.ReactNode; onClose: () => void }) {
+  useEffect(() => {
+    const close = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [onClose]);
+  return <div className="fixed inset-0 z-50 grid place-items-center p-4">
+    <button className="absolute inset-0 bg-[color-mix(in_srgb,var(--ink)_42%,transparent)]" aria-label="Close dialog" onClick={onClose}/>
+    <Card role="dialog" aria-modal="true" aria-label={title} className="relative z-10 max-h-[92vh] w-full max-w-lg overflow-auto rounded-[1.5rem] shadow-[0_28px_48px_-28px_rgb(18_58_41/.35)]">
+      <CardHeader><PanelTitle title={title} body={body}/><Button variant="ghost" size="icon" onClick={onClose} aria-label="Close dialog"><X/></Button></CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
+  </div>;
+}
+function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+  return <div><Label>{label}</Label>{children}{hint && <p className="mt-1.5 text-[0.875rem] leading-relaxed text-muted">{hint}</p>}</div>;
+}
+function FieldError({ children }: { children?: React.ReactNode }) {
+  return children ? <p className="mt-1.5 text-[0.875rem] text-danger">{children}</p> : null;
+}
+function Note({ tone = "neutral", icon, children }: { tone?: "neutral" | "success" | "warning" | "danger"; icon?: React.ReactNode; children: React.ReactNode }) {
+  return <div className={cn("flex gap-3 rounded-[1rem] p-4 text-[0.9375rem] leading-relaxed", tone === "neutral" && "bg-field", tone === "success" && "bg-success-soft", tone === "warning" && "bg-warning-soft", tone === "danger" && "bg-danger-soft")}>
+    {icon && <span className={cn("mt-0.5 shrink-0 [&_svg]:size-5", tone === "neutral" && "text-pine", tone === "success" && "text-success", tone === "warning" && "text-warning", tone === "danger" && "text-danger")} aria-hidden="true">{icon}</span>}
+    <div className="min-w-0 flex-1">{children}</div>
+  </div>;
+}
+/* A row of numbered steps. `current` is 1-based; `complete` marks steps up to it as done. */
+function Steps({ labels, current, complete = 0 }: { labels: string[]; current: number; complete?: number }) {
+  return <ol className="mb-6 grid grid-cols-1 gap-2" style={{ gridTemplateColumns: `repeat(${labels.length}, minmax(0, 1fr))` }} aria-label="Progress">
+    {labels.map((label, i) => {
+      const n = i + 1; const done = n < current || n <= complete; const here = n === current && !done;
+      return <li key={label} className="flex min-w-0 items-center gap-2.5" aria-current={here ? "step" : undefined}>
+        <span className={cn("grid size-8 shrink-0 place-items-center rounded-full text-[0.875rem] font-semibold", done ? "bg-pine text-paper" : here ? "bg-paper text-pine shadow-[inset_0_0_0_2px_var(--pine)]" : "bg-field text-muted")}>{done ? <Check size={15} aria-hidden="true"/> : n}</span>
+        <span className={cn("hidden truncate text-[0.875rem] font-semibold sm:block", here || done ? "text-pine" : "text-muted")}>{label}<span className="sr-only">{done ? " (done)" : ""}</span></span>
+      </li>;
+    })}
+  </ol>;
+}
 
 export function DashboardPage() {
   const gateways = useQuery({ queryKey: ["gateways"], queryFn: api.gateways });
   const devices = useQuery({ queryKey: ["devices"], queryFn: api.devices });
   const readings = useQuery({ queryKey: ["latest"], queryFn: api.latestReadings });
   const alerts = useQuery({ queryKey: ["alerts"], queryFn: api.alerts });
-  const me = useQuery({ queryKey: ["me"], queryFn: api.me });
   const loading = gateways.isLoading || devices.isLoading;
   const gatewayList = gateways.data?.items ?? [];
   const deviceList = devices.data?.items ?? [];
-  const onlineGateways = gatewayList.filter(g => g.status === "online").length;
-  const onlineDevices = deviceList.filter(d => d.status === "online").length;
-  const orgName = me.data?.orgName || "Your organization";
+  const alertList = alerts.data?.items ?? [];
+  const onlineGateways = gatewayList.filter(g => isOnline(g.status)).length;
+  const reportingDevices = deviceList.filter(d => isOnline(d.status)).length;
   const eventTimes = [...(readings.data?.items ?? []).map(r => r.time), ...gatewayList.map(g => g.lastSeenAt)]
     .filter(Boolean).map(t => new Date(t as string).getTime());
-  const lastEvent = eventTimes.length ? relativeTime(new Date(Math.max(...eventTimes)).toISOString()) : "no events yet";
+  const lastEvent = eventTimes.length ? relativeTime(new Date(Math.max(...eventTimes)).toISOString()) : null;
+  const offline = gatewayList.length - onlineGateways;
+  const summary = !gatewayList.length ? "No gateway is connected yet."
+    : offline > 0 ? `${offline} of ${gatewayList.length} gateways ${offline === 1 ? "isn't" : "aren't"} connected.`
+    : alertList.length ? `Your gateways are connected. There ${alertList.length === 1 ? "is 1 alert" : `are ${alertList.length} alerts`} to look at.`
+    : "Everything is connected, and there are no alerts.";
+  const healthy = gatewayList.length > 0 && offline === 0 && alertList.length === 0;
   return <>
-    <PageHeader eyebrow="Network command center" title={`Welcome back, ${orgName}`} description="Live visibility across gateways, joins, uplinks, downlinks, and every connected system." action={<Link href="/sensors/new"><Button><Plus size={16}/>Provision sensor</Button></Link>}/>
-    <div className="relative mb-5 overflow-hidden rounded-2xl bg-[#071710] p-5 text-white shadow-[0_18px_55px_rgba(8,57,36,.14)] sm:p-6"><div className="absolute inset-0 bg-cover bg-center opacity-20 mix-blend-luminosity" style={{ backgroundImage: "url('/og.png')" }}/><div className="absolute inset-0 bg-[linear-gradient(90deg,#071710_15%,rgba(7,23,16,.75)_62%,rgba(7,23,16,.38))]"/><div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-center"><div><div className="mb-3 flex items-center gap-2 text-xs font-medium text-emerald-300"><span className="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_12px_#6ee7b7]"/>{onlineGateways > 0 ? "All critical systems operational" : "Gateway offline, check the connection"}</div><h2 className="text-xl font-semibold tracking-[-.03em]">{orgName} LoRaWAN network</h2><p className="mt-1 max-w-xl text-sm text-white/55">US915 · ChirpStack-connected · Last network event {lastEvent}</p></div><div className="grid grid-cols-3 gap-2 text-center"><div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur"><p className="text-lg font-semibold">{deviceList.length}</p><p className="text-[10px] text-white/45">Sensors</p></div><div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur"><p className="text-lg font-semibold">{onlineDevices}</p><p className="text-[10px] text-white/45">Reporting now</p></div><div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur"><p className="text-lg font-semibold">AES-128</p><p className="text-[10px] text-white/45">Encryption</p></div></div></div></div>
-    {loading ? <LoadingCards/> : <div className="grid gap-4 md:grid-cols-3"><Metric label="Gateways online" value={`${onlineGateways} / ${gatewayList.length}`} foot={onlineGateways === gatewayList.length && gatewayList.length > 0 ? "All gateways connected" : "A gateway is offline"} icon={<RadioTower size={18}/>}/><Metric label="Sensors reporting" value={`${onlineDevices} / ${deviceList.length}`} foot={deviceList.length - onlineDevices > 0 ? `${deviceList.length - onlineDevices} not reporting` : "All sensors reporting"} icon={<Activity size={18}/>}/><Metric label="Open alerts" value={alerts.data?.items.length || 0} foot={(alerts.data?.items.length || 0) === 0 ? "Nothing needs attention" : "Review in Alerts"} icon={<AlertTriangle size={18}/>}/></div>}
-    <div className="mt-5 grid gap-5 xl:grid-cols-[1.55fr_.9fr]">
-      <Card><CardHeader><PanelTitle title="Latest readings" body="The newest values received from each sensor."/><Link href="/data" className="text-sm font-medium text-[var(--accent)]">View all</Link></CardHeader><CardContent>{readings.isLoading ? <Skeleton className="h-64"/> : <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{readings.data?.items.map((reading) => <Link href={`/sensors/${reading.eui}`} key={reading.eui} className="rounded-xl border p-4 transition hover:border-[var(--accent)] hover:bg-[var(--surface-muted)]"><div className="mb-5 flex items-start justify-between"><div><p className="font-medium">{reading.name}</p><p className="mt-0.5 text-xs text-[var(--muted)]">Updated {relativeTime(reading.time)}</p></div><StatusDot status="active"/></div><div className="grid grid-cols-2 gap-3">{Object.entries(reading.measurements).slice(0, 4).map(([name, value]) => <div key={name}><p className="text-[11px] text-[var(--muted)]">{formatMetric(name)}</p><p className="mt-0.5 text-lg font-semibold">{value}<span className="ml-1 text-xs font-normal text-[var(--muted)]">{units[name]}</span></p></div>)}</div></Link>)}</div>}</CardContent></Card>
-      <div className="space-y-5"><Card><CardHeader><PanelTitle title="Gateway status"/></CardHeader><CardContent className="space-y-3">{gateways.data?.items.map(g => <Link href={`/gateways/${g.eui}`} key={g.eui} className="flex items-center gap-3 rounded-lg border p-3 hover:bg-[var(--surface-muted)]"><div className="rounded-lg bg-[var(--surface-muted)] p-2"><RadioTower size={17}/></div><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{g.name}</p><p className="text-xs text-[var(--muted)]">{g.status === "online" ? `Seen ${relativeTime(g.lastSeenAt)}` : "Awaiting connection"}</p></div><Badge tone={tone(g.status)}><StatusDot status={g.status}/>{g.status}</Badge></Link>)}</CardContent></Card>
-      <Card><CardHeader><PanelTitle title="Recent alerts"/><Link href="/alerts" className="text-sm text-[var(--accent)]">See all</Link></CardHeader><CardContent className="space-y-3">{alerts.data?.items.slice(0, 2).map(alert => <div key={alert.id} className="flex gap-3"><div className="mt-1 h-2 w-2 rounded-full bg-red-500"/><div><p className="text-sm font-medium">{alert.target}</p><p className="text-xs leading-5 text-[var(--muted)]">{alert.message} · {relativeTime(alert.time)}</p></div></div>)}</CardContent></Card></div>
+    <PageHeader title="Overview" description="See which gateways and sensors are reporting, their newest readings, and anything that needs a look." action={<ButtonLink href="/sensors/new"><Plus size={18} aria-hidden="true"/>Add a sensor</ButtonLink>}/>
+    {loading ? <Skeleton className="mb-6 h-20 rounded-[1.25rem]"/> : <div className={cn("mb-6 flex items-start gap-4 rounded-[1.25rem] p-5", healthy ? "bg-lime-pale" : "bg-field")} role="status">
+      <span className="grid size-10 shrink-0 place-items-center rounded-full bg-paper text-pine" aria-hidden="true">{healthy ? <Check size={18}/> : <AlertTriangle size={18}/>}</span>
+      <div className="min-w-0">
+        <p className="text-[1.0625rem] font-semibold text-pine">{summary}</p>
+        <p className="mt-0.5 text-[0.9375rem] text-muted">{lastEvent ? `The last message from your network arrived ${lastEvent}.` : "Nothing has arrived from your network yet."}{!gatewayList.length && <> <Link href="/gateways" className="link">Add a gateway</Link></>}</p>
+      </div>
+    </div>}
+    {loading ? <LoadingCards/> : <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <Metric label="Gateways connected" value={`${onlineGateways} / ${gatewayList.length}`} foot={!gatewayList.length ? "None added yet" : offline === 0 ? "All connected" : `${offline} not connected`} icon={<RadioTower/>}/>
+      <Metric label="Sensors reporting" value={`${reportingDevices} / ${deviceList.length}`} foot={!deviceList.length ? "None added yet" : reportingDevices === deviceList.length ? "All reporting" : `${deviceList.length - reportingDevices} not reporting`} icon={<Activity/>}/>
+      <Metric label="Open alerts" value={alertList.length} foot={alertList.length === 0 ? "Nothing needs attention" : "Listed under Alerts"} icon={<Bell/>}/>
+    </div>}
+    <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-[1.55fr_.9fr]">
+      <Card>
+        <CardHeader><PanelTitle title="Newest readings" body="The latest values from each sensor."/><Link href="/data" className="link shrink-0 text-[0.9375rem]">All readings</Link></CardHeader>
+        <CardContent>{readings.isLoading ? <Skeleton className="h-64"/> : !readings.data?.items.length ? <EmptyState icon={<Database/>} title="No readings yet" body="Readings appear here as soon as a sensor reports." action={<ButtonLink href="/sensors/new" variant="secondary">Add a sensor</ButtonLink>}/> : <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {readings.data.items.map(reading => <Link href={`/sensors/${reading.eui}`} key={reading.eui} className="group rounded-[1rem] border border-line p-4 transition-colors hover:bg-field">
+            <p className="truncate font-semibold text-ink group-hover:text-pine">{reading.name}</p>
+            <p className="mt-0.5 text-[0.8125rem] text-muted">Updated {relativeTime(reading.time)}</p>
+            <dl className="mt-4 grid grid-cols-2 gap-3">{Object.entries(reading.measurements).slice(0, 4).map(([name, value]) => <div key={name} className="min-w-0"><dt className="truncate text-[0.8125rem] text-muted">{formatMetric(name)}</dt><dd className="mt-0.5 text-[1.125rem] font-semibold text-pine tabular-nums">{value}<span className="ml-1 text-[0.8125rem] font-normal text-muted">{units[name]}</span></dd></div>)}</dl>
+          </Link>)}
+        </div>}</CardContent>
+      </Card>
+      <div className="space-y-6">
+        <Card>
+          <CardHeader><PanelTitle title="Gateways"/><Link href="/gateways" className="link shrink-0 text-[0.9375rem]">All gateways</Link></CardHeader>
+          <CardContent className="space-y-3">{gateways.isLoading ? <Skeleton className="h-32"/> : !gatewayList.length ? <p className="text-[0.9375rem] text-muted">No gateways yet. Add the one your sensors will report through.</p> : gatewayList.map(g => <Link href={`/gateways/${g.eui}`} key={g.eui} className="flex items-center gap-3 rounded-[1rem] border border-line p-3.5 transition-colors hover:bg-field">
+            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-field text-pine" aria-hidden="true"><RadioTower size={18}/></span>
+            <span className="min-w-0 flex-1"><span className="block truncate font-semibold text-ink">{g.name}</span><span className="block text-[0.8125rem] text-muted">{isOnline(g.status) ? `Seen ${relativeTime(g.lastSeenAt)}` : g.lastSeenAt ? `Last seen ${relativeTime(g.lastSeenAt)}` : "Not connected yet"}</span></span>
+            <StatusBadge status={statusOf(g.status)} size="sm"/>
+          </Link>)}</CardContent>
+        </Card>
+        <Card>
+          <CardHeader><PanelTitle title="Alerts"/><Link href="/alerts" className="link shrink-0 text-[0.9375rem]">All alerts</Link></CardHeader>
+          <CardContent>{alerts.isLoading ? <Skeleton className="h-24"/> : !alertList.length ? <p className="text-[0.9375rem] text-muted">Nothing needs attention right now.</p> : <ul className="space-y-4">{alertList.slice(0, 3).map(alert => <li key={alert.id} className="flex gap-3">
+            <span className={cn("mt-2 size-2 shrink-0 rounded-full", alert.type === "low_battery" ? "bg-warning" : "bg-danger")} aria-hidden="true"/>
+            <div className="min-w-0"><p className="font-semibold text-ink">{alert.target}</p><p className="text-[0.875rem] leading-relaxed text-muted">{alert.message} · {relativeTime(alert.time)}</p></div>
+          </li>)}</ul>}</CardContent>
+        </Card>
+      </div>
     </div>
   </>;
 }
@@ -58,27 +163,105 @@ export function GatewaysPage() {
   const devicesQuery = useQuery({ queryKey: ["devices"], queryFn: api.devices });
   const form = useForm<z.infer<typeof gatewaySchema>>({ resolver: zodResolver(gatewaySchema) });
   const create = useMutation({ mutationFn: api.createGateway, onSuccess: () => { qc.invalidateQueries({ queryKey: ["gateways"] }); setAdding(false); form.reset(); toast.success("Gateway added"); } });
-  return <><PageHeader eyebrow="LoRaWAN network" title="Gateways" description="LoRaWAN gateways receive long-range radio messages from campus sensors and relay them securely to your private network." action={<Button onClick={() => setAdding(true)}><Plus size={16}/>Add gateway</Button>}/>
-    <Card>{query.isLoading || devicesQuery.isLoading ? <div className="p-5"><Skeleton className="h-72"/></div> : !query.data?.items.length ? <EmptyState icon={<RadioTower/>} title="No gateways yet" body="Connect your first gateway to start receiving sensor data." action={<Button onClick={() => setAdding(true)}>Add gateway</Button>}/> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b bg-[var(--surface-muted)]/50 text-xs text-[var(--muted)]"><tr><th className="px-5 py-3 font-medium">Gateway</th><th className="px-5 py-3 font-medium">Status</th><th className="px-5 py-3 font-medium">Attached sensors</th><th className="px-5 py-3 font-medium">Last seen</th><th className="px-5 py-3 font-medium">Location</th><th/></tr></thead><tbody>{query.data.items.map(g => { const attached = devicesQuery.data?.items.filter(d => d.gatewayEui === g.eui) || []; return <tr key={g.eui} className="border-b last:border-0 hover:bg-[var(--surface-muted)]/40"><td className="px-5 py-4"><Link href={`/gateways/${g.eui}`} className="font-medium hover:text-[var(--accent)]">{g.name}</Link><p className="mt-0.5 font-mono text-xs text-[var(--muted)]">{g.eui}</p></td><td className="px-5 py-4"><Badge tone={tone(g.status)}><StatusDot status={g.status}/>{g.status}</Badge></td><td className="px-5 py-4"><Link href={`/gateways/${g.eui}`} className="inline-flex items-center gap-2 font-medium text-[var(--accent)]"><Activity size={15}/>{attached.length}<span className="font-normal text-[var(--muted)]">{attached.length === 1 ? "sensor" : "sensors"}</span></Link></td><td className="px-5 py-4 text-[var(--muted)]">{relativeTime(g.lastSeenAt)}</td><td className="px-5 py-4 text-[var(--muted)]">{g.location ? `${g.location.lat.toFixed(4)}, ${g.location.lng.toFixed(4)}` : "Not set"}</td><td className="px-5 py-4"><Link href={`/gateways/${g.eui}`} aria-label={`View ${g.name}`}><ArrowRight size={16}/></Link></td></tr>})}</tbody></table></div>}</Card>
-    {adding && <Modal title="Add a gateway" body="Register the hardware identifier and campus location." onClose={() => setAdding(false)}><form className="space-y-4" onSubmit={form.handleSubmit(v => create.mutate({ eui: v.eui.toUpperCase(), name: v.name, ...(v.lat && v.lng ? { location: { lat: Number(v.lat), lng: Number(v.lng) } } : {}) }))}><Field label="Gateway name"><Input {...form.register("name")} placeholder="e.g. Science Center roof"/></Field><Field label="Gateway identifier" hint="The 16-character hardware ID printed on the gateway label."><Input {...form.register("eui")} className="font-mono" placeholder="24E124FFFEFE2354"/>{form.formState.errors.eui && <p className="mt-1 text-xs text-red-600">{form.formState.errors.eui.message}</p>}</Field><div className="grid grid-cols-2 gap-3"><Field label="Latitude (optional)"><Input type="number" step="any" {...form.register("lat")}/></Field><Field label="Longitude (optional)"><Input type="number" step="any" {...form.register("lng")}/></Field></div><div className="flex justify-end gap-2 pt-2"><Button type="button" variant="secondary" onClick={() => setAdding(false)}>Cancel</Button><Button disabled={create.isPending}>{create.isPending ? "Adding…" : "Add gateway"}</Button></div></form></Modal>}
+  return <>
+    <PageHeader title="Gateways" description="A gateway picks up the radio messages your sensors send and passes them on to your network." action={<Button onClick={() => setAdding(true)}><Plus size={18} aria-hidden="true"/>Add a gateway</Button>}/>
+    <Card className="overflow-hidden">{query.isLoading || devicesQuery.isLoading ? <div className="p-6"><Skeleton className="h-72"/></div> : !query.data?.items.length ? <EmptyState icon={<RadioTower/>} title="No gateways yet" body="Add your first gateway to start hearing from your sensors." action={<Button variant="secondary" onClick={() => setAdding(true)}>Add a gateway</Button>}/> : <div className="relative overflow-x-auto">
+      <table className="w-full min-w-[44rem] text-[0.9375rem]">
+        <thead className="border-b border-line bg-field"><tr><th className={TH}>Gateway</th><th className={TH}>Status</th><th className={TH}>Sensors heard</th><th className={TH}>Last seen</th><th className={TH}>Location</th><th className={TH}><span className="sr-only">Open</span></th></tr></thead>
+        <tbody>{query.data.items.map(g => { const attached = devicesQuery.data?.items.filter(d => d.gatewayEui === g.eui) || []; return <tr key={g.eui} className="border-b border-line transition-colors last:border-0 hover:bg-field/60">
+          <td className={TD}><Link href={`/gateways/${g.eui}`} className="font-semibold text-ink hover:text-leaf">{g.name}</Link><p className="mt-0.5 font-mono text-[0.8125rem] text-muted">{g.eui}</p></td>
+          <td className={TD}><StatusBadge status={statusOf(g.status)} size="sm"/></td>
+          <td className={TD}>{attached.length} {attached.length === 1 ? "sensor" : "sensors"}</td>
+          <td className={cn(TD, "text-muted")}>{relativeTime(g.lastSeenAt)}</td>
+          <td className={cn(TD, "text-muted")}>{g.location ? `${g.location.lat.toFixed(4)}, ${g.location.lng.toFixed(4)}` : "Not set"}</td>
+          <td className={cn(TD, "text-right")}><Link href={`/gateways/${g.eui}`} aria-label={`Open ${g.name}`} className="inline-grid size-9 place-items-center rounded-full text-pine transition-colors hover:bg-pine hover:text-paper"><ArrowRight size={17}/></Link></td>
+        </tr>; })}</tbody>
+      </table>
+    </div>}</Card>
+    {adding && <Modal title="Add a gateway" body="Give it a name, enter the ID printed on its label, and say where it is if you like." onClose={() => setAdding(false)}>
+      <form className="space-y-5" onSubmit={form.handleSubmit(v => create.mutate({ eui: v.eui.toUpperCase(), name: v.name, ...(v.lat && v.lng ? { location: { lat: Number(v.lat), lng: Number(v.lng) } } : {}) }))}>
+        <Field label="Gateway name"><Input {...form.register("name")} placeholder="e.g. Science Center roof"/></Field>
+        <Field label="Gateway ID" hint="The 16-character hardware ID printed on the gateway's label."><Input {...form.register("eui")} className="font-mono" placeholder="24E124FFFEFE2354"/><FieldError>{form.formState.errors.eui?.message}</FieldError></Field>
+        <div className="grid grid-cols-2 gap-3"><Field label="Latitude (optional)"><Input type="number" step="any" {...form.register("lat")}/></Field><Field label="Longitude (optional)"><Input type="number" step="any" {...form.register("lng")}/></Field></div>
+        <div className="flex justify-end gap-2 pt-2"><Button type="button" variant="secondary" onClick={() => setAdding(false)}>Cancel</Button><Button disabled={create.isPending}>{create.isPending ? "Adding…" : "Add gateway"}</Button></div>
+      </form>
+    </Modal>}
   </>;
 }
 
 export function GatewayDetailPage({ eui }: { eui: string }) {
   const query = useQuery({ queryKey: ["gateway", eui], queryFn: () => api.gateway(eui) }); const g = query.data;
   const devicesQuery = useQuery({ queryKey: ["devices"], queryFn: api.devices });
-  if (query.isLoading || devicesQuery.isLoading) return <Skeleton className="h-[520px]"/>;
-  if (!g) return <EmptyState icon={<WifiOff/>} title="Gateway not found" body="This gateway may have been removed."/>;
+  if (query.isLoading || devicesQuery.isLoading) return <Skeleton className="h-[520px] rounded-[1.25rem]"/>;
+  if (!g) return <EmptyState icon={<WifiOff/>} title="Gateway not found" body="This gateway may have been removed." action={<ButtonLink href="/gateways" variant="secondary">All gateways</ButtonLink>}/>;
   const attached = devicesQuery.data?.items.filter(d => d.gatewayEui === g.eui) || [];
-  const chart = g.metrics?.uplinks.map((p, i) => ({ time: new Date(p.time).toLocaleTimeString([], { hour: "numeric" }), uplinks: p.value, downlinks: g.metrics?.downlinks[i]?.value })) || [];
-  return <><Link href="/gateways" className="mb-5 inline-flex items-center gap-2 text-sm text-[var(--muted)] hover:text-[var(--foreground)]"><ArrowLeft size={16}/>All gateways</Link><PageHeader eyebrow="Gateway" title={g.name} description={`Hardware identifier ${g.eui}`} action={<Badge tone={tone(g.status)}><StatusDot status={g.status}/>{g.status}</Badge>}/><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Metric label="Attached sensors" value={attached.length} foot={`${attached.filter(d => d.status === "active").length} currently active`} icon={<Activity size={18}/>}/><Metric label="Uplinks today" value="1,284" foot="12% above yesterday" icon={<Signal size={18}/>}/><Metric label="Downlinks today" value="74" foot="All transmissions accepted" icon={<ArrowRight size={18}/>}/><Metric label="Last seen" value={relativeTime(g.lastSeenAt)} foot="Connection is healthy" icon={<Clock3 size={18}/>}/></div><div className="mt-5 grid gap-5 lg:grid-cols-[1.5fr_.8fr]"><Card><CardHeader><PanelTitle title="Radio traffic" body="Messages received and sent over the last 24 hours."/></CardHeader><CardContent><div className="h-72"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chart}><defs><linearGradient id="green" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#167a4b" stopOpacity={.28}/><stop offset="1" stopColor="#167a4b" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)"/><XAxis dataKey="time" tick={{ fontSize: 11, fill: "var(--muted)" }} axisLine={false} tickLine={false}/><YAxis tick={{ fontSize: 11, fill: "var(--muted)" }} axisLine={false} tickLine={false}/><Tooltip/><Area type="monotone" dataKey="uplinks" stroke="#167a4b" fill="url(#green)" strokeWidth={2}/><Line type="monotone" dataKey="downlinks" stroke="#3b82f6" strokeWidth={2}/></AreaChart></ResponsiveContainer></div></CardContent></Card><Card><CardHeader><PanelTitle title="Installed location"/></CardHeader><CardContent><div className="grid h-48 place-items-center rounded-xl bg-[linear-gradient(135deg,var(--surface-muted),var(--accent-soft))]"><div className="text-center"><div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[var(--accent)] text-white shadow-lg"><MapPin/></div><p className="mt-3 font-medium">AJLC roof</p><p className="text-xs text-[var(--muted)]">{g.location?.lat}, {g.location?.lng}</p></div></div><div className="mt-4 flex items-center justify-between text-sm"><span className="text-[var(--muted)]">Network region</span><span className="font-medium">US915</span></div></CardContent></Card></div><Card className="mt-5"><CardHeader><PanelTitle title="Attached sensors" body="Sensors whose latest uplink was received through this gateway."/><Badge tone={attached.every(d => d.status === "active") ? "success" : "warning"}>{attached.filter(d => d.status === "active").length} of {attached.length} active</Badge></CardHeader><CardContent>{!attached.length ? <EmptyState icon={<Activity/>} title="No sensors attached" body="Sensors will appear here after their first uplink is received by this gateway."/> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b text-xs text-[var(--muted)]"><tr><th className="pb-3 font-medium">Sensor</th><th className="pb-3 font-medium">Status</th><th className="pb-3 font-medium">Last uplink</th><th className="pb-3 font-medium">Signal</th><th className="pb-3 font-medium">Battery</th><th/></tr></thead><tbody>{attached.map(d => <tr key={d.eui} className="border-b last:border-0"><td className="py-4 pr-4"><Link href={`/sensors/${d.eui}`} className="font-medium hover:text-[var(--accent)]">{d.name}</Link><p className="mt-0.5 text-xs text-[var(--muted)]">{d.typeName} · <span className="font-mono">{d.eui}</span></p></td><td className="py-4 pr-4"><Badge tone={tone(d.status)}><StatusDot status={d.status}/>{d.status}</Badge></td><td className="py-4 pr-4 text-[var(--muted)]">{relativeTime(d.lastSeenAt)}</td><td className="py-4 pr-4"><p className="font-medium">{d.rssi ?? "—"} dBm</p><p className="text-xs text-[var(--muted)]">SNR {d.snr ?? "—"} dB</p></td><td className="py-4 pr-4"><span className="inline-flex items-center gap-1.5"><Battery size={15}/>{d.battery == null ? "—" : `${d.battery}%`}</span></td><td className="py-4"><Link href={`/sensors/${d.eui}`} aria-label={`Open ${d.name}`}><ArrowRight size={16}/></Link></td></tr>)}</tbody></table></div>}</CardContent></Card></>;
+  const reporting = attached.filter(d => isOnline(d.status)).length;
+  const chart = g.metrics?.uplinks.map((p, i) => ({ time: new Date(p.time).toLocaleTimeString([], { hour: "numeric" }), received: p.value, sent: g.metrics?.downlinks[i]?.value })) || [];
+  // Totals come from the gateway's own hourly counts; nothing is shown that the network didn't report.
+  const received = g.metrics?.uplinks.reduce((n, p) => n + p.value, 0);
+  const sent = g.metrics?.downlinks.reduce((n, p) => n + p.value, 0);
+  return <>
+    <BackLink href="/gateways">All gateways</BackLink>
+    <PageHeader title={g.name} description={`Hardware ID ${g.eui}`} action={<StatusBadge status={statusOf(g.status)}/>}/>
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <Metric label="Sensors heard here" value={attached.length} foot={attached.length ? `${reporting} reporting now` : "None yet"} icon={<Activity/>}/>
+      <Metric label="Messages received" value={received == null ? "—" : received.toLocaleString()} foot="In the last 24 hours" icon={<Signal/>}/>
+      <Metric label="Messages sent" value={sent == null ? "—" : sent.toLocaleString()} foot="In the last 24 hours" icon={<ArrowRight/>}/>
+      <Metric label="Last seen" value={relativeTime(g.lastSeenAt)} foot={g.lastSeenAt ? new Date(g.lastSeenAt).toLocaleString() : "Not connected yet"} icon={<Clock3/>}/>
+    </div>
+    <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1.5fr_.8fr]">
+      <Card>
+        <CardHeader><PanelTitle title="Radio traffic" body="Messages received and sent each hour over the last 24 hours."/></CardHeader>
+        <CardContent>{chart.length ? <>
+          <div className="h-72"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chart}><defs><linearGradient id="received" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={SERIES[0]} stopOpacity={.24}/><stop offset="1" stopColor={SERIES[0]} stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)"/><XAxis dataKey="time" tick={TICK} axisLine={false} tickLine={false}/><YAxis tick={TICK} axisLine={false} tickLine={false} width={36}/><Tooltip {...TOOLTIP}/><Area type="monotone" dataKey="received" name="Received" stroke={SERIES[0]} fill="url(#received)" strokeWidth={2}/><Line type="monotone" dataKey="sent" name="Sent" stroke={SERIES[1]} strokeWidth={2}/></AreaChart></ResponsiveContainer></div>
+          <div className="mt-3 flex flex-wrap gap-5 text-[0.875rem] text-muted"><span className="flex items-center gap-2"><span className="size-2.5 rounded-full" style={{ background: SERIES[0] }}/>Received</span><span className="flex items-center gap-2"><span className="size-2.5 rounded-full" style={{ background: SERIES[1] }}/>Sent</span></div>
+        </> : <p className="py-10 text-center text-[0.9375rem] text-muted">The network hasn't reported traffic for this gateway yet.</p>}</CardContent>
+      </Card>
+      <Card>
+        <CardHeader><PanelTitle title="Location"/></CardHeader>
+        <CardContent>{g.location ? <div className="flex items-start gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-full bg-field text-pine" aria-hidden="true"><MapPin size={18}/></span><div><p className="font-semibold text-ink tabular-nums">{g.location.lat.toFixed(4)}, {g.location.lng.toFixed(4)}</p><p className="mt-0.5 text-[0.875rem] text-muted">Latitude and longitude entered when the gateway was added.</p></div></div> : <p className="text-[0.9375rem] text-muted">No location was entered when this gateway was added.</p>}</CardContent>
+      </Card>
+    </div>
+    <Card className="mt-6">
+      <CardHeader><PanelTitle title="Sensors heard here" body="Sensors whose newest message came through this gateway."/>{attached.length > 0 && <Badge tone={reporting === attached.length ? "success" : "warning"}>{reporting} of {attached.length} reporting</Badge>}</CardHeader>
+      <CardContent>{!attached.length ? <EmptyState icon={<Activity/>} title="No sensors yet" body="A sensor appears here once one of its messages comes through this gateway."/> : <div className="-mx-5 relative overflow-x-auto sm:-mx-6"><table className="w-full min-w-[40rem] text-[0.9375rem]">
+        <thead className="border-y border-line bg-field"><tr><th className={TH}>Sensor</th><th className={TH}>Status</th><th className={TH}>Last message</th><th className={TH}>Signal</th><th className={TH}>Battery</th><th className={TH}><span className="sr-only">Open</span></th></tr></thead>
+        <tbody>{attached.map(d => <tr key={d.eui} className="border-b border-line last:border-0">
+          <td className={TD}><Link href={`/sensors/${d.eui}`} className="font-semibold text-ink hover:text-leaf">{d.name}</Link><p className="mt-0.5 text-[0.8125rem] text-muted">{d.typeName} · <span className="font-mono">{d.eui}</span></p></td>
+          <td className={TD}><StatusBadge status={statusOf(d.status)} size="sm"/></td>
+          <td className={cn(TD, "text-muted")}>{relativeTime(d.lastSeenAt)}</td>
+          <td className={TD}><p className="font-semibold tabular-nums">{d.rssi ?? "—"} dBm</p><p className="text-[0.8125rem] text-muted">SNR {d.snr ?? "—"} dB</p></td>
+          <td className={TD}><span className="inline-flex items-center gap-1.5 tabular-nums"><Battery size={16} aria-hidden="true"/>{d.battery == null ? "—" : `${d.battery}%`}</span></td>
+          <td className={cn(TD, "text-right")}><Link href={`/sensors/${d.eui}`} aria-label={`Open ${d.name}`} className="inline-grid size-9 place-items-center rounded-full text-pine transition-colors hover:bg-pine hover:text-paper"><ArrowRight size={17}/></Link></td>
+        </tr>)}</tbody>
+      </table></div>}</CardContent>
+    </Card>
+  </>;
 }
 
 export function SensorsPage() {
   const query = useQuery({ queryKey: ["devices"], queryFn: api.devices }); const [search, setSearch] = useState(""); const [status, setStatus] = useState("all"); const [type, setType] = useState("all");
-  const items = useMemo(() => query.data?.items.filter(d => (status === "all" || d.status === status) && (type === "all" || d.typeId === type) && `${d.name} ${d.eui}`.toLowerCase().includes(search.toLowerCase())) || [], [query.data, status, type, search]);
+  const items = useMemo(() => query.data?.items.filter(d => (status === "all" || (status === "online" ? isOnline(d.status) : d.status === status)) && (type === "all" || d.typeId === type) && `${d.name} ${d.eui}`.toLowerCase().includes(search.toLowerCase())) || [], [query.data, status, type, search]);
   const types = Array.from(new Map(query.data?.items.map(d => [d.typeId, d.typeName])).entries());
-  return <><PageHeader eyebrow="Fleet" title="Sensors" description="Monitor every sensing device, its newest reading, and its connection health." action={<Link href="/sensors/new"><Button><Plus size={16}/>Add sensor</Button></Link>}/><Card><div className="flex flex-col gap-3 border-b p-4 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-3 text-[var(--muted)]" size={16}/><Input className="pl-9" placeholder="Search by name or hardware identifier" value={search} onChange={e => setSearch(e.target.value)}/></div><Select className="sm:w-40" value={type} onChange={e => setType(e.target.value)}><option value="all">All types</option>{types.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</Select><Select className="sm:w-36" value={status} onChange={e => setStatus(e.target.value)}><option value="all">All statuses</option><option value="active">Active</option><option value="offline">Offline</option><option value="disabled">Disabled</option></Select></div>{<QueryState data={query.data ? items : undefined} isLoading={query.isLoading} isError={query.isError} error={query.error} loading={<div className="p-5"><Skeleton className="h-72"/></div>} empty={<EmptyState icon={<Activity/>} title="No matching sensors" body="Change the filters or add a new sensor."/>}>{rows => <div className="divide-y">{rows.map(d => <Link href={`/sensors/${d.eui}`} key={d.eui} className="grid gap-4 p-5 transition hover:bg-[var(--surface-muted)]/40 sm:grid-cols-[1.2fr_.9fr_.7fr_1.2fr_auto] sm:items-center"><div className="flex items-center gap-3"><div className="rounded-lg bg-[var(--surface-muted)] p-2.5 text-[var(--accent)]"><Activity size={18}/></div><div><p className="font-medium">{d.name}</p><p className="font-mono text-xs text-[var(--muted)]">{d.eui}</p></div></div><div><p className="text-sm">{d.typeName}</p><p className="text-xs text-[var(--muted)]">Last seen {relativeTime(d.lastSeenAt)}</p></div><div><Badge tone={tone(d.status)}><StatusDot status={d.status}/>{d.status}</Badge></div><div className="flex gap-4">{d.latest && Object.entries(d.latest.measurements).slice(0, 2).map(([name, value]) => <div key={name}><p className="text-[10px] uppercase tracking-wide text-[var(--muted)]">{formatMetric(name)}</p><p className="text-sm font-semibold">{value} {units[name]}</p></div>)}</div><div className="flex items-center gap-2 text-sm text-[var(--muted)]"><Battery size={16}/>{d.battery == null ? "—" : `${d.battery}%`}<ArrowRight size={16} className="ml-2"/></div></Link>)}</div>}</QueryState>}</Card></>;
+  return <>
+    <PageHeader title="Sensors" description="Every sensor in your network, with its newest reading, its battery, and when it last reported." action={<ButtonLink href="/sensors/new"><Plus size={18} aria-hidden="true"/>Add a sensor</ButtonLink>}/>
+    <Card className="overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-line p-4 sm:flex-row sm:p-5">
+        <div className="relative flex-1"><Search className="pointer-events-none absolute top-1/2 left-4 -translate-y-1/2 text-muted" size={18} aria-hidden="true"/><Input className="pl-11" aria-label="Search sensors" placeholder="Search by name or hardware ID" value={search} onChange={e => setSearch(e.target.value)}/></div>
+        <Select className="sm:w-48" aria-label="Sensor type" value={type} onChange={e => setType(e.target.value)}><option value="all">All types</option>{types.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</Select>
+        <Select className="sm:w-44" aria-label="Status" value={status} onChange={e => setStatus(e.target.value)}><option value="all">All statuses</option><option value="online">Online</option><option value="offline">Offline</option><option value="never">Never seen</option></Select>
+      </div>
+      <QueryState data={query.data ? items : undefined} isLoading={query.isLoading} isError={query.isError} error={query.error} onRetry={() => query.refetch()} loading={<div className="p-6"><Skeleton className="h-72"/></div>} empty={query.data?.items.length ? <EmptyState icon={<Search/>} title="No sensors match" body="Try another name, type or status."/> : <EmptyState icon={<Activity/>} title="No sensors yet" body="Add your first sensor and it will show up here with its readings." action={<ButtonLink href="/sensors/new" variant="secondary">Add a sensor</ButtonLink>}/>}>
+        {rows => <ul className="divide-y divide-line">{rows.map(d => <li key={d.eui}><Link href={`/sensors/${d.eui}`} className="grid grid-cols-1 gap-4 p-5 transition-colors hover:bg-field/60 sm:grid-cols-[1.2fr_.9fr_.6fr_1.2fr_auto] sm:items-center">
+          <div className="flex min-w-0 items-center gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-full bg-field text-pine" aria-hidden="true"><Activity size={18}/></span><div className="min-w-0"><p className="truncate font-semibold text-ink">{d.name}</p><p className="truncate font-mono text-[0.8125rem] text-muted">{d.eui}</p></div></div>
+          <div className="min-w-0"><p className="truncate text-[0.9375rem]">{d.typeName}</p><p className="text-[0.8125rem] text-muted">Last seen {relativeTime(d.lastSeenAt)}</p></div>
+          <div><StatusBadge status={statusOf(d.status)} size="sm"/></div>
+          <div className="flex gap-5">{d.latest && Object.entries(d.latest.measurements).slice(0, 2).map(([name, value]) => <div key={name} className="min-w-0"><p className="truncate text-[0.8125rem] text-muted">{formatMetric(name)}</p><p className="font-semibold text-pine tabular-nums">{value} {units[name]}</p></div>)}</div>
+          <div className="flex items-center gap-2 text-[0.9375rem] text-muted"><Battery size={17} aria-hidden="true"/><span className="tabular-nums">{d.battery == null ? "—" : `${d.battery}%`}</span><ArrowRight size={17} className="ml-2 text-pine" aria-hidden="true"/></div>
+        </Link></li>)}</ul>}
+      </QueryState>
+    </Card>
+  </>;
 }
 
 // Per-family setup guidance. Sources: Milesight user guides + the lessons from
@@ -172,19 +355,57 @@ export function NewSensorPage() {
     else if (step === 2) { if (await form.trigger(["name", "eui", "appKey"])) form.handleSubmit(v => create.mutate({ ...v, appKey: v.appKey || undefined }))(); }
     else if (step === 3) setStep(4);
   }
-  const labels = ["Type", "Name & ID", "Secure key", "Test & confirm"];
-  return <div className="mx-auto max-w-3xl"><button onClick={cancelSetup} className="mb-5 inline-flex items-center gap-2 text-sm text-[var(--muted)] hover:text-[var(--foreground)]"><ArrowLeft size={16}/>Cancel setup</button><PageHeader eyebrow="Add sensor" title={step === 4 ? (confirmed ? "Sensor confirmed — it's alive" : "Waiting for the first signal") : "Connect a new sensor"} description={step === 4 ? "A sensor only joins your fleet once we hear from it." : "Pick the type first — every step after is tailored to it."}/>
-    <div className="mb-6 grid grid-cols-4 gap-2">{labels.map((label, i) => <div key={label} className="flex items-center gap-2"><div className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-semibold ${step > i + 1 || (i === 3 && confirmed) ? "bg-[var(--accent)] text-white" : step === i + 1 ? "border-2 border-[var(--accent)] text-[var(--accent)]" : "bg-[var(--surface-muted)] text-[var(--muted)]"}`}>{step > i + 1 || (i === 3 && confirmed) ? <Check size={14}/> : i + 1}</div><span className="hidden text-xs font-medium sm:block">{label}</span></div>)}</div>
-    <Card><CardContent className="pt-6">
-    {step === 1 && <div className="space-y-5"><div><h2 className="text-lg font-semibold">What kind of sensor is it?</h2><p className="mt-1 text-sm text-[var(--muted)]">The type decides what we ask for next and which setup steps you get.</p></div><Field label="Device type"><Select {...form.register("typeId")}><option value="">Select a supported sensor</option>{types.data?.items.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</Select>{form.formState.errors.typeId && <p className="mt-1 text-xs text-red-600">{form.formState.errors.typeId.message}</p>}</Field>{selType && <div className="rounded-xl border bg-[var(--surface-muted)] p-4 text-sm"><div className="flex flex-wrap items-center gap-2"><Badge tone={(selType as any).hasDecoder ? "success" : "warning"}>{(selType as any).hasDecoder ? "Decoder installed — readings arrive as named values" : "No decoder yet — readings arrive raw until one is added"}</Badge><Badge tone="neutral">Class {selType.class}</Badge></div>{(selType as any).description && <p className="mt-2 leading-6 text-[var(--muted)]">{String((selType as any).description).split("\n")[0]}</p>}</div>}</div>}
-    {step === 2 && <div className="space-y-5"><div><h2 className="text-lg font-semibold">Name it and enter its hardware ID</h2><p className="mt-1 text-sm text-[var(--muted)]">Use a descriptive location so people recognize it later.</p></div><Field label="Sensor name"><Input {...form.register("name")} placeholder="e.g. Library second-floor air"/>{form.formState.errors.name && <p className="mt-1 text-xs text-red-600">{form.formState.errors.name.message}</p>}</Field><Field label="Hardware ID (DevEUI)"><Input {...form.register("eui")} placeholder="24e124707e041853" className="font-mono"/>{form.formState.errors.eui && <p className="mt-1 text-xs text-red-600">{form.formState.errors.eui.message}</p>}</Field>{euiHelp && <div className="rounded-xl border bg-[var(--surface-muted)] p-4"><p className="text-sm font-semibold">Where to find it on this type</p><ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm leading-6">{euiHelp.map(s => <li key={s}>{s}</li>)}</ol></div>}<Field label="Application key the sensor already knows (optional)" hint="If your box, label, or vendor key-list gives you the sensor's key, paste it here — then there's nothing to write into the hardware at all. Leave blank and we'll generate one for you to write in."><Input {...form.register("appKey")} placeholder="32 hex characters" className="font-mono"/>{form.formState.errors.appKey && <p className="mt-1 text-xs text-red-600">{form.formState.errors.appKey.message}</p>}{selType?.name.toLowerCase().includes("milesight") && <button type="button" className="mt-2 text-xs font-medium text-[var(--accent)] hover:underline" onClick={() => form.setValue("appKey", MILESIGHT_FACTORY_KEY, { shouldValidate: true })}>Try the Milesight factory default key — many units ship with it (zero-touch setup)</button>}</Field></div>}
-    {step === 3 && result && result.keyProvided && <div><div className="rounded-xl border border-emerald-500/30 bg-emerald-500/8 p-4"><div className="flex items-start gap-3"><div className="rounded-full bg-emerald-500/15 p-2 text-emerald-700"><ShieldCheck size={21}/></div><div><p className="font-semibold">Zero-touch setup — nothing to write into {result.name}</p><p className="mt-1 text-sm leading-6 text-[var(--muted)]">You gave us the key the sensor already knows, so the hardware needs no configuration. Just make sure of three things, then continue to the live test.</p></div></div></div><ol className="mt-5 list-decimal space-y-2 rounded-xl border bg-[var(--surface-muted)] p-4 pl-9 text-sm leading-6"><li>Insert batteries / power the sensor on.</li><li>Make sure the device is <strong>Activated</strong> (some ship with the radio off — a quick NFC tap in ToolBox shows it).</li><li>Region US915, sub-band 2 (channels 8-15) — the usual factory setting for US units.</li></ol><p className="mt-3 text-xs leading-5 text-[var(--muted)]">If the key you entered turns out not to match this unit, the next step will tell you — you can then redo setup and let us generate a key instead.</p></div>}
-    {step === 3 && result && !result.keyProvided && <div><div className="rounded-xl border border-emerald-500/30 bg-emerald-500/8 p-4"><div className="flex items-start gap-3"><div className="rounded-full bg-emerald-500/15 p-2 text-emerald-700"><ShieldCheck size={21}/></div><div><p className="font-semibold">Credentials ready for {result.name}</p><p className="mt-1 text-sm leading-6 text-[var(--muted)]">Write the one-time key below into the sensor, then continue — we'll listen for its first message. This key will not be shown again.</p></div></div></div><div className="mt-5"><Label>One-time network key (AppKey)</Label><div className="flex items-center gap-2 rounded-xl border bg-[var(--surface-muted)] p-4"><code className="min-w-0 flex-1 break-all font-mono text-sm font-semibold tracking-wider">{result.appKey}</code><Button size="icon" variant="secondary" aria-label="Copy network key" onClick={() => { navigator.clipboard.writeText(result.appKey); toast.success("Key copied"); }}><Copy size={17}/></Button></div><p className="mt-2 flex gap-2 text-xs leading-5 text-amber-700 dark:text-amber-300"><AlertTriangle size={15} className="mt-0.5 shrink-0"/>Keep this key private. We never store it in the browser after you leave this page.</p></div>{guide && <div className="mt-6 rounded-xl border bg-[var(--surface-muted)] p-4"><p className="text-sm font-semibold">Write it into the sensor</p><p className="mt-0.5 text-xs text-[var(--muted)]">Tool: {guide.tool}</p>{guide.power && <p className="mt-2 flex gap-2 text-xs leading-5 text-amber-700 dark:text-amber-300"><AlertTriangle size={14} className="mt-0.5 shrink-0"/>{guide.power}</p>}<ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm leading-6">{guide.steps.map(s => <li key={s}>{s}</li>)}</ol>{guide.note && <p className="mt-3 text-xs font-medium text-amber-700 dark:text-amber-300">{guide.note}</p>}</div>}</div>}
-    {step === 4 && result && <div>{confirmed ? <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/8 p-5"><div className="flex items-start gap-3"><div className="rounded-full bg-emerald-500/15 p-2 text-emerald-700"><Check size={21}/></div><div><p className="font-semibold">Confirmed — {result.name} is on the network</p><p className="mt-1 text-sm leading-6 text-[var(--muted)]">{confirm.data?.lastSeenAt ? `First signal received ${relativeTime(confirm.data.lastSeenAt)}.` : "It just joined the network."} {confirm.data?.latest ? "It's already sending readings." : "Readings will appear as it reports."}</p>{confirm.data?.latest && <div className="mt-3 flex flex-wrap gap-2">{Object.entries(confirm.data.latest.measurements).slice(0, 4).map(([k, v]) => <Badge key={k} tone="info">{formatMetric(k)}: {String(v)} {units[k] ?? ""}</Badge>)}</div>}</div></div></div> : <div className="rounded-xl border border-dashed p-6"><div className="flex items-start gap-3"><div className="rounded-full bg-[var(--surface-muted)] p-2 text-[var(--accent)]"><Wifi size={21} className="animate-pulse"/></div><div><p className="font-semibold">Listening for {result.name}…</p><p className="mt-1 text-sm leading-6 text-[var(--muted)]">Power the sensor on (and make sure it's activated). It should join within a few minutes of the key being written. This page checks automatically every few seconds — leave it open.</p>{liveError && <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/8 p-3 text-sm leading-6"><p className="font-semibold text-red-700 dark:text-red-300">We can hear it — but something's wrong</p><p className="mt-0.5 text-[var(--muted)]">{String(liveError.code).includes("MIC") ? (result.keyProvided ? "The key you entered doesn't match this unit — it ships with a custom key. Cancel setup and redo it leaving the key field blank: we'll generate one for you to write into the sensor." : "The key written to the sensor doesn't match the one from step 3. Re-write the key exactly (copy-paste, then Write) — the sensor retries on its own.") : `${liveError.code}: ${liveError.description}`}</p></div>}<ul className="mt-3 list-disc space-y-1 pl-5 text-xs leading-5 text-[var(--muted)]"><li>Nothing after 5 minutes? Re-check the key was Written (not just typed), the device is Activated, and the region is US915 sub-band 2.</li><li>You can also save now and confirm later — the sensor stays registered and shows as "never seen" until it joins.</li></ul></div></div></div>}</div>}
-    <div className="mt-7 flex items-center justify-between border-t pt-5">{step === 2 ? <Button variant="secondary" onClick={() => setStep(1)}><ArrowLeft size={16}/>Back</Button> : <span/>}<div className="flex gap-2">{step === 4 && !confirmed && <Button variant="secondary" onClick={() => { qc2.invalidateQueries({ queryKey: ["devices"] }); router.push("/sensors"); }}>Save, confirm later</Button>}{step < 4 ? <Button onClick={next} disabled={create.isPending}>{step === 2 ? (create.isPending ? "Creating…" : "Create & get key") : step === 3 ? "I wrote the key — test it" : "Continue"}<ArrowRight size={16}/></Button> : <Button onClick={() => { qc2.invalidateQueries({ queryKey: ["devices"] }); router.push("/sensors"); }} disabled={!confirmed}>{confirmed ? "Finish — sensor added" : "Waiting for signal…"}</Button>}</div></div>
-    </CardContent></Card></div>;
+  return <div className="mx-auto max-w-3xl">
+    <button onClick={cancelSetup} className="link mb-4 inline-flex min-h-11 items-center gap-1.5 text-[0.9375rem]"><ArrowLeft size={16} aria-hidden="true"/>Cancel setup</button>
+    <PageHeader title={step === 4 ? (confirmed ? "Your sensor is on the network" : "Waiting for the first signal") : "Add a sensor"} description={step === 4 ? "A sensor joins your list once we hear from it." : "Choose the sensor's type first. Every step after that is written for that model."}/>
+    <Steps labels={["Type", "Name and ID", "Key", "Test"]} current={step} complete={step === 4 && confirmed ? 4 : 0}/>
+    <Card><CardContent className="pt-6 sm:pt-7">
+      {step === 1 && <div className="space-y-5">
+        <div><h2 className="text-[1.25rem]">What kind of sensor is it?</h2><p className="mt-1 text-[0.9375rem] text-muted">The type decides what we ask for next and which setup steps you get.</p></div>
+        <Field label="Device type"><Select {...form.register("typeId")}><option value="">Choose a sensor type</option>{types.data?.items.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</Select><FieldError>{form.formState.errors.typeId?.message}</FieldError></Field>
+        {selType && <Note><div className="flex flex-wrap items-center gap-2"><Badge tone={(selType as any).hasDecoder ? "success" : "warning"}>{(selType as any).hasDecoder ? "Decoder installed, so readings arrive as named values" : "No decoder yet, so readings arrive raw until one is added"}</Badge><Badge tone="neutral">Class {selType.class}</Badge></div>{(selType as any).description && <p className="mt-2 text-muted">{String((selType as any).description).split("\n")[0]}</p>}</Note>}
+      </div>}
+      {step === 2 && <div className="space-y-5">
+        <div><h2 className="text-[1.25rem]">Name it and enter its hardware ID</h2><p className="mt-1 text-[0.9375rem] text-muted">Use a name that says where it is, so people recognize it later.</p></div>
+        <Field label="Sensor name"><Input {...form.register("name")} placeholder="e.g. Library second-floor air"/><FieldError>{form.formState.errors.name?.message}</FieldError></Field>
+        <Field label="Hardware ID (DevEUI)"><Input {...form.register("eui")} placeholder="24e124707e041853" className="font-mono"/><FieldError>{form.formState.errors.eui?.message}</FieldError></Field>
+        {euiHelp && <Note><p className="font-semibold text-pine">Where to find it on this type</p><ol className="mt-2 list-decimal space-y-1.5 pl-5">{euiHelp.map(s => <li key={s}>{s}</li>)}</ol></Note>}
+        <Field label="Application key the sensor already knows (optional)" hint="If your box, label, or vendor key-list gives you the sensor's key, paste it here — then there's nothing to write into the hardware at all. Leave blank and we'll generate one for you to write in."><Input {...form.register("appKey")} placeholder="32 hex characters" className="font-mono"/><FieldError>{form.formState.errors.appKey?.message}</FieldError>{selType?.name.toLowerCase().includes("milesight") && <button type="button" className="link mt-2 text-left text-[0.875rem]" onClick={() => form.setValue("appKey", MILESIGHT_FACTORY_KEY, { shouldValidate: true })}>Try the Milesight factory default key. Many units ship with it, so there's nothing to write in.</button>}</Field>
+      </div>}
+      {step === 3 && result && result.keyProvided && <div>
+        <Note tone="success" icon={<ShieldCheck/>}><p className="font-semibold text-pine">Nothing to write into {result.name}</p><p className="mt-1 text-muted">You gave us the key the sensor already knows, so the hardware needs no setup. Check these three things, then continue to the live test.</p></Note>
+        <ol className="mt-5 list-decimal space-y-2 rounded-[1rem] bg-field p-4 pl-9 text-[0.9375rem] leading-relaxed"><li>Insert batteries / power the sensor on.</li><li>Make sure the device is <strong>Activated</strong> (some ship with the radio off — a quick NFC tap in ToolBox shows it).</li><li>Region US915, sub-band 2 (channels 8-15) — the usual factory setting for US units.</li></ol>
+        <p className="mt-3 text-[0.875rem] leading-relaxed text-muted">If the key you entered turns out not to match this unit, the next step will tell you — you can then redo setup and let us generate a key instead.</p>
+      </div>}
+      {step === 3 && result && !result.keyProvided && <div>
+        <Note tone="success" icon={<ShieldCheck/>}><p className="font-semibold text-pine">A key is ready for {result.name}</p><p className="mt-1 text-muted">Write the one-time key below into the sensor, then continue — we'll listen for its first message. This key will not be shown again.</p></Note>
+        <div className="mt-5"><Label>One-time network key (AppKey)</Label><div className="flex items-center gap-2 rounded-[1rem] bg-field p-4"><code className="min-w-0 flex-1 break-all font-mono text-[0.9375rem] font-semibold tracking-wider text-pine">{result.appKey}</code><Button size="icon" variant="secondary" aria-label="Copy network key" onClick={() => { navigator.clipboard.writeText(result.appKey); toast.success("Key copied"); }}><Copy/></Button></div><p className="mt-2 flex gap-2 text-[0.875rem] leading-relaxed text-warning"><AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true"/>Keep this key private. We never store it in the browser after you leave this page.</p></div>
+        {guide && <div className="mt-6 rounded-[1rem] bg-field p-4 text-[0.9375rem] leading-relaxed"><p className="font-semibold text-pine">Write it into the sensor</p><p className="mt-0.5 text-[0.875rem] text-muted">Tool: {guide.tool}</p>{guide.power && <p className="mt-2 flex gap-2 text-[0.875rem] text-warning"><AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true"/>{guide.power}</p>}<ol className="mt-3 list-decimal space-y-1.5 pl-5">{guide.steps.map(s => <li key={s}>{s}</li>)}</ol>{guide.note && <p className="mt-3 text-[0.875rem] font-semibold text-warning">{guide.note}</p>}</div>}
+      </div>}
+      {step === 4 && result && <div>{confirmed ? <Note tone="success" icon={<Check/>}>
+        <p className="font-semibold text-pine">{result.name} is on the network</p>
+        <p className="mt-1 text-muted">{confirm.data?.lastSeenAt ? `First signal received ${relativeTime(confirm.data.lastSeenAt)}.` : "It just joined the network."} {confirm.data?.latest ? "It's already sending readings." : "Readings will appear as it reports."}</p>
+        {confirm.data?.latest && <div className="mt-3 flex flex-wrap gap-2">{Object.entries(confirm.data.latest.measurements).slice(0, 4).map(([k, v]) => <Badge key={k} tone="info">{formatMetric(k)}: {String(v)} {units[k] ?? ""}</Badge>)}</div>}
+      </Note> : <div className="rounded-[1rem] border border-dashed border-line p-5 sm:p-6"><div className="flex items-start gap-3">
+        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-field text-pine" aria-hidden="true"><Wifi size={18} className="animate-pulse motion-reduce:animate-none"/></span>
+        <div className="min-w-0 text-[0.9375rem] leading-relaxed">
+          <p className="font-semibold text-pine">Listening for {result.name}…</p>
+          <p className="mt-1 text-muted">Power the sensor on (and make sure it's activated). It should join within a few minutes of the key being written. This page checks automatically every few seconds — leave it open.</p>
+          {liveError && <div className="mt-3 rounded-[0.75rem] bg-danger-soft p-3.5"><p className="font-semibold text-danger">We can hear it, but something's wrong</p><p className="mt-0.5 text-ink">{String(liveError.code).includes("MIC") ? (result.keyProvided ? "The key you entered doesn't match this unit — it ships with a custom key. Cancel setup and redo it leaving the key field blank: we'll generate one for you to write into the sensor." : "The key written to the sensor doesn't match the one from step 3. Re-write the key exactly (copy-paste, then Write) — the sensor retries on its own.") : `${liveError.code}: ${liveError.description}`}</p></div>}
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-[0.875rem] text-muted"><li>Nothing after 5 minutes? Re-check the key was Written (not just typed), the device is Activated, and the region is US915 sub-band 2.</li><li>You can also save now and confirm later — the sensor stays registered and shows as "never seen" until it joins.</li></ul>
+        </div>
+      </div></div>}</div>}
+      <div className="mt-7 flex flex-col-reverse gap-3 border-t border-line pt-5 sm:flex-row sm:items-center sm:justify-between">
+        {step === 2 ? <Button variant="secondary" onClick={() => setStep(1)}><ArrowLeft size={18} aria-hidden="true"/>Back</Button> : <span className="hidden sm:block"/>}
+        <div className="flex flex-col-reverse gap-2 sm:flex-row">
+          {step === 4 && !confirmed && <Button variant="secondary" onClick={() => { qc2.invalidateQueries({ queryKey: ["devices"] }); router.push("/sensors"); }}>Save, confirm later</Button>}
+          {step < 4 ? <Button onClick={next} disabled={create.isPending}>{step === 2 ? (create.isPending ? "Creating…" : "Create and get the key") : step === 3 ? "I wrote the key, test it" : "Continue"}<ArrowRight size={18} aria-hidden="true"/></Button>
+            : <Button onClick={() => { qc2.invalidateQueries({ queryKey: ["devices"] }); router.push("/sensors"); }} disabled={!confirmed}>{confirmed ? "Finish" : "Waiting for a signal…"}</Button>}
+        </div>
+      </div>
+    </CardContent></Card>
+  </div>;
 }
-
 
 export function SensorDetailPage({ eui }: { eui: string }) {
   const qc = useQueryClient(); const [range, setRange] = useState("24h"); const [minutes, setMinutes] = useState(10);
@@ -193,16 +414,50 @@ export function SensorDetailPage({ eui }: { eui: string }) {
   const command = useMutation({ mutationFn: () => api.setReportingInterval(eui, minutes), onSuccess: data => toast.success(data.note), onError: (e: Error) => toast.error(e.message) });
   const cmdList = useQuery({ queryKey: ["commands", eui], queryFn: () => api.commands(eui) });
   const sendCmd = useMutation({ mutationFn: (id: string) => api.sendCommand(eui, id), onSuccess: data => toast.success(data.note), onError: (e: Error) => toast.error(e.message) });
+  // Recompute the chart series only when readings change, not on every parent
+  // re-render (theme toggle, cache tick, sibling state) — recharts is expensive.
+  // It must run before the early returns below, so every render calls the same hooks.
+  const chart = useMemo(() => readings.data?.items.map(r => ({ time: new Date(r.time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), ...r.measurements })) || [], [readings.data]);
   function runCommand(cmd: { id: string; label: string; disruptive?: boolean }) {
     if (cmd.disruptive && !window.confirm(`${cmd.label} this sensor? It will act at its next check-in.`)) return;
     sendCmd.mutate(cmd.id);
   }
-  const d = device.data; if (device.isLoading) return <Skeleton className="h-[620px]"/>; if (!d) return <EmptyState icon={<Activity/>} title="Sensor not found" body="This sensor may have been removed."/>;
+  const d = device.data;
+  if (device.isLoading) return <Skeleton className="h-[620px] rounded-[1.25rem]"/>;
+  if (!d) return <EmptyState icon={<Activity/>} title="Sensor not found" body="This sensor may have been removed." action={<ButtonLink href="/sensors" variant="secondary">All sensors</ButtonLink>}/>;
   const keys = Object.keys(readings.data?.items[0]?.measurements || d.latest?.measurements || {});
-  // Recompute the chart series only when readings change, not on every parent
-  // re-render (theme toggle, cache tick, sibling state) — recharts is expensive.
-  const chart = useMemo(() => readings.data?.items.map(r => ({ time: new Date(r.time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), ...r.measurements })) || [], [readings.data]);
-  return <><Link href="/sensors" className="mb-5 inline-flex items-center gap-2 text-sm text-[var(--muted)]"><ArrowLeft size={16}/>All sensors</Link><PageHeader eyebrow={d.typeName} title={d.name} description={`Hardware identifier ${d.eui}`} action={<div className="flex items-center gap-3"><Badge tone={tone(d.status)}><StatusDot status={d.status}/>{d.status}</Badge><label className="flex items-center gap-2 text-sm font-medium"><span>Sensor active</span><button role="switch" aria-checked={d.enabled} onClick={() => toggle.mutate(!d.enabled)} className={`relative h-6 w-11 rounded-full transition ${d.enabled ? "bg-[var(--accent)]" : "bg-[var(--surface-muted)]"}`}><span className={`absolute top-1 h-4 w-4 rounded-full bg-white transition ${d.enabled ? "left-6" : "left-1"}`}/></button></label></div>}/><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{d.latest ? Object.entries(d.latest.measurements).map(([name, value]) => <Metric key={name} label={formatMetric(name)} value={`${value} ${units[name] || ""}`} foot={`Updated ${relativeTime(d.latest?.time)}`} icon={<Gauge size={18}/>}/>) : <Metric label="Latest reading" value="—" foot="Waiting for first report" icon={<Clock3 size={18}/>}/>}</div><div className="mt-5 grid gap-5 xl:grid-cols-[1.55fr_.85fr]"><Card><CardHeader><PanelTitle title="Live readings" body="Measurement history received from this sensor."/><Select className="w-32" value={range} onChange={e => setRange(e.target.value)}><option value="24h">Last 24h</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></Select></CardHeader><CardContent><div className="h-80"><ResponsiveContainer width="100%" height="100%"><LineChart data={chart}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)"/><XAxis dataKey="time" tick={{ fontSize: 10, fill: "var(--muted)" }} axisLine={false} tickLine={false}/><YAxis tick={{ fontSize: 10, fill: "var(--muted)" }} axisLine={false} tickLine={false}/><Tooltip/>{keys.map((key, i) => <Line key={key} type="monotone" dataKey={key} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={false}/>)}</LineChart></ResponsiveContainer></div><div className="mt-3 flex flex-wrap gap-4">{keys.map((key, i) => <span key={key} className="flex items-center gap-2 text-xs text-[var(--muted)]"><span className="h-2 w-2 rounded-full" style={{ background: COLORS[i % COLORS.length] }}/>{formatMetric(key)}</span>)}</div></CardContent></Card><div className="space-y-5"><Card><CardHeader><PanelTitle title="Controls" body="Send a validated instruction to the sensor."/></CardHeader><CardContent>{cmdList.data?.items && cmdList.data.items.length > 0 && <div className="mb-5"><p className="mb-2 text-xs font-medium text-[var(--muted)]">Remote control</p><div className="flex flex-wrap gap-2">{cmdList.data.items.map(cmd => <Button key={cmd.id} size="sm" variant={cmd.disruptive ? "secondary" : "secondary"} title={cmd.description} disabled={sendCmd.isPending} onClick={() => runCommand(cmd)}>{cmd.id === "buzzer" ? <Signal size={15}/> : cmd.id === "reboot" ? <RadioTower size={15}/> : <SlidersHorizontal size={15}/>}{cmd.label}</Button>)}</div><p className="mt-2 text-xs text-[var(--muted)]">Commands are queued and delivered at the sensor’s next check-in.</p></div>}<Field label="Reporting interval" hint="The change applies after the sensor’s next report because this is a low-power Class-A device."><div className="flex gap-2"><Input type="number" min={1} max={1440} value={minutes} onChange={e => setMinutes(Number(e.target.value))}/><span className="grid place-items-center text-sm text-[var(--muted)]">minutes</span></div></Field><Button className="mt-4 w-full" disabled={command.isPending || minutes < 1 || minutes > 1440} onClick={() => command.mutate()}><SlidersHorizontal size={16}/>{command.isPending ? "Queueing…" : "Set interval"}</Button></CardContent></Card><Card><CardHeader><PanelTitle title="Configuration"/></CardHeader><CardContent className="space-y-3">{Object.entries(d.config || {}).map(([key, value]) => <div key={key} className="flex justify-between gap-4 border-b pb-3 text-sm last:border-0 last:pb-0"><span className="text-[var(--muted)]">{formatMetric(key)}</span><span className="text-right font-medium">{String(value)}</span></div>)}</CardContent></Card></div></div></>;
+  const config = Object.entries(d.config || {});
+  return <>
+    <BackLink href="/sensors">All sensors</BackLink>
+    <PageHeader title={d.name} description={`${d.typeName ? `${d.typeName} · ` : ""}Hardware ID ${d.eui}`} action={<div className="flex flex-wrap items-center gap-4">
+      <StatusBadge status={statusOf(d.status)}/>
+      <label className="flex items-center gap-3 text-[0.9375rem] font-semibold text-ink"><span>Sensor on</span><button role="switch" aria-checked={Boolean(d.enabled)} aria-label="Sensor on" onClick={() => toggle.mutate(!d.enabled)} className={cn("relative h-7 w-12 rounded-full transition-colors", d.enabled ? "bg-leaf" : "bg-[var(--control-border)]")}><span className={cn("absolute top-1 size-5 rounded-full bg-paper shadow-sm transition-[left]", d.enabled ? "left-6" : "left-1")}/></button></label>
+    </div>}/>
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">{d.latest ? Object.entries(d.latest.measurements).map(([name, value]) => <Metric key={name} label={formatMetric(name)} value={`${value} ${units[name] || ""}`} foot={`Updated ${relativeTime(d.latest?.time)}`} icon={<Gauge/>}/>) : <Metric label="Latest reading" value="—" foot="Waiting for the first report" icon={<Clock3/>}/>}</div>
+    <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-[1.55fr_.85fr]">
+      <Card>
+        <CardHeader><PanelTitle title="Readings over time" body="What this sensor has reported."/><Select className="h-10 w-36 text-[0.9375rem]" aria-label="Time range" value={range} onChange={e => setRange(e.target.value)}><option value="24h">Last 24h</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></Select></CardHeader>
+        <CardContent>{readings.isLoading ? <Skeleton className="h-80"/> : !chart.length ? <p className="py-16 text-center text-[0.9375rem] text-muted">No readings yet. They appear here once the sensor reports.</p> : <>
+          <div className="h-80"><ResponsiveContainer width="100%" height="100%"><LineChart data={chart}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)"/><XAxis dataKey="time" tick={TICK} axisLine={false} tickLine={false}/><YAxis tick={TICK} axisLine={false} tickLine={false} width={40}/><Tooltip {...TOOLTIP}/>{keys.map((key, i) => <Line key={key} type="monotone" dataKey={key} name={formatMetric(key)} stroke={SERIES[i % SERIES.length]} strokeWidth={2} dot={false}/>)}</LineChart></ResponsiveContainer></div>
+          <div className="mt-3 flex flex-wrap gap-5">{keys.map((key, i) => <span key={key} className="flex items-center gap-2 text-[0.875rem] text-muted"><span className="size-2.5 rounded-full" style={{ background: SERIES[i % SERIES.length] }}/>{formatMetric(key)}</span>)}</div>
+        </>}</CardContent>
+      </Card>
+      <div className="space-y-6">
+        <Card>
+          <CardHeader><PanelTitle title="Send a command" body="Commands wait until the sensor next checks in."/></CardHeader>
+          <CardContent>
+            {cmdList.data?.items && cmdList.data.items.length > 0 && <div className="mb-6"><p className="mb-2 text-[0.875rem] font-semibold text-ink">Remote control</p><div className="flex flex-wrap gap-2">{cmdList.data.items.map(cmd => <Button key={cmd.id} size="sm" variant="secondary" title={cmd.description} disabled={sendCmd.isPending} onClick={() => runCommand(cmd)}>{cmd.id === "buzzer" ? <Signal size={16} aria-hidden="true"/> : cmd.id === "reboot" ? <RadioTower size={16} aria-hidden="true"/> : <SlidersHorizontal size={16} aria-hidden="true"/>}{cmd.label}</Button>)}</div></div>}
+            <Field label="Reporting interval" hint="How often the sensor reports. It takes effect after the sensor's next report, because it only listens right after it sends."><div className="flex items-center gap-3"><Input type="number" min={1} max={1440} value={minutes} onChange={e => setMinutes(Number(e.target.value))}/><span className="text-[0.9375rem] text-muted">minutes</span></div></Field>
+            <Button className="mt-5 w-full" disabled={command.isPending || minutes < 1 || minutes > 1440} onClick={() => command.mutate()}><SlidersHorizontal size={18} aria-hidden="true"/>{command.isPending ? "Sending…" : "Set interval"}</Button>
+          </CardContent>
+        </Card>
+        {config.length > 0 && <Card>
+          <CardHeader><PanelTitle title="Settings on the sensor"/></CardHeader>
+          <CardContent><dl className="divide-y divide-line">{config.map(([key, value]) => <div key={key} className="flex justify-between gap-4 py-3 text-[0.9375rem] first:pt-0 last:pb-0"><dt className="text-muted">{formatMetric(key)}</dt><dd className="text-right font-semibold text-ink">{String(value)}</dd></div>)}</dl></CardContent>
+        </Card>}
+      </div>
+    </div>
+  </>;
 }
 
 export function DeviceTypesPage() {
@@ -220,37 +475,132 @@ function decodeUplink(input) {
   const [form, setForm] = useState({ name: "", description: "", lorawanVersion: "1.0.3", klass: "A", decoderScript: STARTER });
   const create = useMutation({
     mutationFn: () => api.createDeviceType({ name: form.name, region: "US915", lorawanVersion: form.lorawanVersion, class: form.klass, description: form.description, decoderScript: form.decoderScript }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["device-types"] }); setOpen(false); toast.success("Device type added — it now appears in the add-sensor wizard"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["device-types"] }); setOpen(false); toast.success("Device type added. It now shows up when you add a sensor."); },
     onError: (e: Error) => toast.error(e.message),
   });
-  return <><PageHeader eyebrow="Catalog" title="Device types" description="Reusable definitions keep sensor setup, measurements, and network behavior consistent. Add your own for custom or DIY hardware." action={<Button onClick={() => setOpen(true)}><Plus size={16}/>Add type</Button>}/>{query.isLoading ? <LoadingCards/> : <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{query.data?.items.map(type => <Card key={type.id}><CardContent className="pt-5"><div className="flex items-start justify-between"><div className="rounded-xl bg-[var(--accent-soft)] p-3 text-[var(--accent)]"><Activity size={20}/></div><Badge tone="neutral">Class {type.class}</Badge></div><h2 className="mt-5 font-semibold">{type.name}</h2><p className="mt-1 text-sm text-[var(--muted)]">{type.region} · {type.lorawanVersion.replace("LORAWAN_", "LoRaWAN ").replace(/_/g, ".")}</p><div className="mt-5 flex flex-wrap gap-2">{(type as any).hasDecoder ? <Badge tone="success">Decoder installed</Badge> : <Badge tone="warning">No decoder yet</Badge>}</div></CardContent></Card>)}</div>}{open && <Modal title="Add a custom device type" body="For DIY and unsupported hardware (Mayfly dataloggers, Arduino builds, other vendors). You define the payload, so you own the decoder." onClose={() => setOpen(false)}><div className="space-y-4"><Field label="Type name"><Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. EnviroDIY Mayfly - DO logger"/></Field><Field label="Description (optional)"><Input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="What it measures, where it lives"/></Field><div className="grid grid-cols-2 gap-3"><Field label="LoRaWAN version" hint="Check your radio module's docs. XBee LR = 1.0.4, most others 1.0.2/1.0.3."><Select value={form.lorawanVersion} onChange={e => setForm({ ...form, lorawanVersion: e.target.value })}><option value="1.0.2">1.0.2</option><option value="1.0.3">1.0.3</option><option value="1.0.4">1.0.4</option></Select></Field><Field label="Device class" hint="A = battery (listens after sending). C = always powered."><Select value={form.klass} onChange={e => setForm({ ...form, klass: e.target.value })}><option>A</option><option>C</option></Select></Field></div><Field label="Payload decoder (JavaScript)" hint="Turns your device's raw bytes into named readings. The starter passes bytes through so you can see data arrive, then refine."><textarea className="h-44 w-full rounded-lg border bg-[var(--surface-muted)] p-3 font-mono text-xs leading-5 outline-none focus:border-[var(--accent)]" value={form.decoderScript} onChange={e => setForm({ ...form, decoderScript: e.target.value })} spellCheck={false}/></Field><div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button disabled={form.name.length < 2 || create.isPending} onClick={() => create.mutate()}>{create.isPending ? "Adding…" : "Add type"}</Button></div></div></Modal>}</>;
+  return <>
+    <PageHeader title="Device types" description="A device type tells the console how to set up a sensor model and read its data. You can add your own for custom or DIY hardware." action={<Button onClick={() => setOpen(true)}><Plus size={18} aria-hidden="true"/>Add a type</Button>}/>
+    {query.isLoading ? <LoadingCards/> : !query.data?.items.length ? <Card><EmptyState icon={<Activity/>} title="No device types yet" body="Add a type for each kind of sensor you use." action={<Button variant="secondary" onClick={() => setOpen(true)}>Add a type</Button>}/></Card> : <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{query.data.items.map(type => <Card key={type.id} className="p-5 sm:p-6">
+      <div className="flex items-start justify-between gap-3"><span className="grid size-11 place-items-center rounded-full bg-field text-pine" aria-hidden="true"><Activity size={19}/></span><Badge tone="neutral">Class {type.class}</Badge></div>
+      <h2 className="mt-5 text-[1.125rem]">{type.name}</h2>
+      <p className="mt-1 text-[0.9375rem] text-muted">{type.region} · {type.lorawanVersion.replace("LORAWAN_", "LoRaWAN ").replace(/_/g, ".")}</p>
+      <div className="mt-5 flex flex-wrap gap-2">{(type as any).hasDecoder ? <Badge tone="success">Decoder installed</Badge> : <Badge tone="warning">No decoder yet</Badge>}</div>
+    </Card>)}</div>}
+    {open && <Modal title="Add a custom device type" body="For DIY and unsupported hardware, like Mayfly dataloggers, Arduino builds or other vendors' sensors. You define the payload, so you write its decoder." onClose={() => setOpen(false)}>
+      <div className="space-y-5">
+        <Field label="Type name"><Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. EnviroDIY Mayfly - DO logger"/></Field>
+        <Field label="Description (optional)"><Input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="What it measures, where it lives"/></Field>
+        <div className="grid grid-cols-2 gap-3"><Field label="LoRaWAN version" hint="Check your radio module's docs. XBee LR = 1.0.4, most others 1.0.2/1.0.3."><Select value={form.lorawanVersion} onChange={e => setForm({ ...form, lorawanVersion: e.target.value })}><option value="1.0.2">1.0.2</option><option value="1.0.3">1.0.3</option><option value="1.0.4">1.0.4</option></Select></Field><Field label="Device class" hint="A = battery (listens after sending). C = always powered."><Select value={form.klass} onChange={e => setForm({ ...form, klass: e.target.value })}><option>A</option><option>C</option></Select></Field></div>
+        <Field label="Payload decoder (JavaScript)" hint="Turns your device's raw bytes into named readings. The starter passes bytes through so you can see data arrive, then refine."><Textarea className="h-44 bg-field font-mono text-[0.8125rem] leading-5" value={form.decoderScript} onChange={e => setForm({ ...form, decoderScript: e.target.value })} spellCheck={false}/></Field>
+        <div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button disabled={form.name.length < 2 || create.isPending} onClick={() => create.mutate()}>{create.isPending ? "Adding…" : "Add type"}</Button></div>
+      </div>
+    </Modal>}
+  </>;
 }
 
-
 export function DataPage() {
-  const devices = useQuery({ queryKey: ["devices"], queryFn: api.devices }); const [eui, setEui] = useState(""); const [from, setFrom] = useState(""); const [to, setTo] = useState(""); const selected = eui || devices.data?.items[0]?.eui || ""; const readings = useQuery({ queryKey: ["readings", selected, from, to], queryFn: () => api.readings(selected, { from: from || undefined, to: to || undefined, limit: 50 }), enabled: Boolean(selected) }); const sensor = devices.data?.items.find(d => d.eui === selected); const keys = Object.keys(readings.data?.items[0]?.measurements || {}); const dataUrl = `${API_BASE}/devices/${selected}/readings`;
+  const devices = useQuery({ queryKey: ["devices"], queryFn: api.devices }); const [eui, setEui] = useState(""); const [from, setFrom] = useState(""); const [to, setTo] = useState(""); const selected = eui || devices.data?.items[0]?.eui || ""; const readings = useQuery({ queryKey: ["readings", selected, from, to], queryFn: () => api.readings(selected, { from: from || undefined, to: to || undefined, limit: 50 }), enabled: Boolean(selected) }); const sensor = devices.data?.items.find(d => d.eui === selected); const keys = Object.keys(readings.data?.items[0]?.measurements || {});
+  // The public data API: another tool sends an API token from Settings in the x-api-key header.
+  const dataUrl = `${API_BASE}/public/readings?device=${selected}&history=1`;
   async function exportCsv() {
     try {
       const blob = await api.downloadReadingsCsv(selected, from, to);
       const url = URL.createObjectURL(blob); const a = document.createElement("a");
       a.href = url; a.download = `${selected}.csv`; a.click(); URL.revokeObjectURL(url);
-    } catch { toast.error("Export failed"); }
+    } catch { toast.error("The download didn't work. Try again in a moment."); }
   }
-  return <><PageHeader eyebrow="Data" title="Readings" description="Explore, chart, and export the measurements collected by each sensor." action={selected && <Button onClick={exportCsv}><Download size={16}/>Export CSV</Button>}/><Card><div className="grid gap-3 border-b p-4 md:grid-cols-[1.3fr_1fr_1fr_auto]"><Field label="Sensor"><Select value={selected} onChange={e => setEui(e.target.value)}>{devices.data?.items.map(d => <option key={d.eui} value={d.eui}>{d.name}</option>)}</Select></Field><Field label="From"><Input type="date" value={from} onChange={e => setFrom(e.target.value)}/></Field><Field label="To"><Input type="date" value={to} onChange={e => setTo(e.target.value)}/></Field><div className="self-end"><Button variant="secondary" onClick={() => { setFrom(""); setTo(""); }}>Clear</Button></div></div><CardContent className="pt-5"><div className="mb-5 flex flex-col justify-between gap-3 rounded-xl bg-[var(--surface-muted)] p-4 sm:flex-row sm:items-center"><div><p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">Copyable data URL</p><code className="mt-1 block break-all text-sm">{dataUrl}</code></div><Button variant="secondary" size="sm" onClick={() => { navigator.clipboard.writeText(dataUrl); toast.success("Data URL copied"); }}><Copy size={14}/>Copy</Button></div><div className="grid gap-5 xl:grid-cols-[1.2fr_1fr]"><div><h2 className="mb-3 font-semibold">{sensor?.name} history</h2><div className="h-64"><ResponsiveContainer width="100%" height="100%"><LineChart data={readings.data?.items.map(r => ({ time: new Date(r.time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), ...r.measurements }))}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)"/><XAxis dataKey="time" tick={{ fontSize: 10, fill: "var(--muted)" }} axisLine={false}/><YAxis tick={{ fontSize: 10, fill: "var(--muted)" }} axisLine={false}/><Tooltip/>{keys.map((key, i) => <Line key={key} dataKey={key} stroke={COLORS[i % COLORS.length]} dot={false} strokeWidth={2}/>)}</LineChart></ResponsiveContainer></div></div><div className="overflow-hidden rounded-xl border"><div className="max-h-72 overflow-auto"><table className="w-full text-left text-xs"><thead className="sticky top-0 bg-[var(--surface-muted)]"><tr><th className="px-3 py-2.5 font-medium">Time</th>{keys.map(k => <th key={k} className="px-3 py-2.5 font-medium">{formatMetric(k)}</th>)}<th className="px-3 py-2.5 font-medium">Signal</th></tr></thead><tbody>{readings.data?.items.slice().reverse().map(r => <tr key={r.time} className="border-t"><td className="whitespace-nowrap px-3 py-2.5 text-[var(--muted)]">{new Date(r.time).toLocaleString()}</td>{keys.map(k => <td key={k} className="px-3 py-2.5 font-medium">{r.measurements[k]} {units[k]}</td>)}<td className="px-3 py-2.5 text-[var(--muted)]">{r.rssi} dBm</td></tr>)}</tbody></table></div></div></div></CardContent></Card></>;
+  if (!devices.isLoading && !devices.data?.items.length) return <>
+    <PageHeader title="Readings" description="Chart and download the readings each sensor has sent."/>
+    <Card><EmptyState icon={<Database/>} title="No sensors yet" body="Once a sensor is added and reporting, its readings show up here." action={<ButtonLink href="/sensors/new" variant="secondary">Add a sensor</ButtonLink>}/></Card>
+  </>;
+  return <>
+    <PageHeader title="Readings" description="Chart and download the readings each sensor has sent." action={selected && <Button onClick={exportCsv}><Download size={18} aria-hidden="true"/>Download CSV</Button>}/>
+    <Card>
+      <div className="grid grid-cols-1 gap-3 border-b border-line p-4 sm:p-5 md:grid-cols-[1.3fr_1fr_1fr_auto]">
+        <Field label="Sensor"><Select value={selected} onChange={e => setEui(e.target.value)}>{devices.data?.items.map(d => <option key={d.eui} value={d.eui}>{d.name}</option>)}</Select></Field>
+        <Field label="From"><Input type="date" value={from} onChange={e => setFrom(e.target.value)}/></Field>
+        <Field label="To"><Input type="date" value={to} onChange={e => setTo(e.target.value)}/></Field>
+        <div className="self-end"><Button variant="secondary" onClick={() => { setFrom(""); setTo(""); }}>Clear dates</Button></div>
+      </div>
+      <CardContent className="pt-5 sm:pt-6">
+        <div className="mb-6 flex flex-col justify-between gap-3 rounded-[1rem] bg-field p-4 sm:flex-row sm:items-center">
+          <div className="min-w-0"><p className="text-[0.875rem] font-semibold text-ink">Address for other tools</p><code className="mt-1 block break-all font-mono text-[0.875rem] text-pine">{dataUrl}</code><p className="mt-1 text-[0.8125rem] text-muted">Send an API token from Settings in the x-api-key header.</p></div>
+          <Button variant="secondary" size="sm" onClick={() => { navigator.clipboard.writeText(dataUrl); toast.success("Address copied"); }}><Copy size={16} aria-hidden="true"/>Copy</Button>
+        </div>
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr_1fr]">
+          <div className="min-w-0"><h2 className="mb-3 text-[1.125rem]">{sensor?.name}</h2>{readings.isLoading ? <Skeleton className="h-64"/> : !keys.length ? <p className="py-16 text-center text-[0.9375rem] text-muted">No readings in this range.</p> : <div className="h-64"><ResponsiveContainer width="100%" height="100%"><LineChart data={readings.data?.items.map(r => ({ time: new Date(r.time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), ...r.measurements }))}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)"/><XAxis dataKey="time" tick={TICK} axisLine={false} tickLine={false}/><YAxis tick={TICK} axisLine={false} tickLine={false} width={40}/><Tooltip {...TOOLTIP}/>{keys.map((key, i) => <Line key={key} dataKey={key} name={formatMetric(key)} stroke={SERIES[i % SERIES.length]} dot={false} strokeWidth={2}/>)}</LineChart></ResponsiveContainer></div>}</div>
+          <div className="overflow-hidden rounded-[1rem] border border-line"><div className="max-h-72 overflow-auto"><table className="w-full text-left text-[0.875rem]">
+            <thead className="sticky top-0 bg-field"><tr><th className="px-3 py-2.5 font-semibold">Time</th>{keys.map(k => <th key={k} className="px-3 py-2.5 font-semibold">{formatMetric(k)}</th>)}<th className="px-3 py-2.5 font-semibold">Signal</th></tr></thead>
+            <tbody>{readings.data?.items.slice().reverse().map(r => <tr key={r.time} className="border-t border-line"><td className="whitespace-nowrap px-3 py-2.5 text-muted">{new Date(r.time).toLocaleString()}</td>{keys.map(k => <td key={k} className="px-3 py-2.5 font-semibold tabular-nums">{r.measurements[k]} {units[k]}</td>)}<td className="px-3 py-2.5 text-muted tabular-nums">{r.rssi} dBm</td></tr>)}</tbody>
+          </table></div></div>
+        </div>
+      </CardContent>
+    </Card>
+  </>;
 }
 
 export function UsersPage() {
   const query = useQuery({ queryKey: ["users"], queryFn: api.users }); const qc = useQueryClient(); const [open, setOpen] = useState(false); const [draft, setDraft] = useState({ name: "", email: "", role: "viewer" as Role, password: "" });
-  const add = useMutation({ mutationFn: () => api.createUser(draft), onSuccess: () => { qc.invalidateQueries({ queryKey: ["users"] }); setOpen(false); toast.success("Person invited"); } }); const update = useMutation({ mutationFn: ({ id, role }: { id: string; role: Role }) => api.updateUser(id, role), onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }) }); const remove = useMutation({ mutationFn: api.deleteUser, onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }) });
-  return <><PageHeader eyebrow="Administration" title="People & roles" description="Control who can manage the network and who can only view readings." action={<Button onClick={() => setOpen(true)}><UserPlus size={16}/>Add person</Button>}/><Card>{query.isLoading ? <div className="p-5"><Skeleton className="h-72"/></div> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b bg-[var(--surface-muted)]/50 text-xs text-[var(--muted)]"><tr><th className="px-5 py-3 font-medium">Person</th><th className="px-5 py-3 font-medium">Role</th><th className="px-5 py-3 font-medium">Last active</th><th/></tr></thead><tbody>{query.data?.items.map(user => <tr key={user.id} className="border-b last:border-0"><td className="px-5 py-4"><p className="font-medium">{user.name}</p><p className="text-xs text-[var(--muted)]">{user.email}</p></td><td className="px-5 py-4"><Select className="w-32" value={user.role} onChange={e => update.mutate({ id: user.id, role: e.target.value as Role })}><option value="admin">Admin</option><option value="manager">Manager</option><option value="viewer">Viewer</option></Select></td><td className="px-5 py-4 text-[var(--muted)]">{relativeTime(user.lastActiveAt)}</td><td className="px-5 py-4 text-right"><Button variant="ghost" size="icon" aria-label={`Remove ${user.name}`} disabled={user.id === "u1"} onClick={() => remove.mutate(user.id)}><Trash2 size={16}/></Button></td></tr>)}</tbody></table></div>}</Card>{open && <Modal title="Add a person" body="Create an account and choose what they can access." onClose={() => setOpen(false)}><div className="space-y-4"><Field label="Full name"><Input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })}/></Field><Field label="Email"><Input type="email" value={draft.email} onChange={e => setDraft({ ...draft, email: e.target.value })}/></Field><Field label="Role"><Select value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Role })}><option value="viewer">Viewer — read only</option><option value="manager">Manager — sensors and data</option><option value="admin">Admin — full access</option></Select></Field><Field label="Temporary password"><Input type="password" value={draft.password} onChange={e => setDraft({ ...draft, password: e.target.value })}/></Field><div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button disabled={!draft.email || !draft.name || !draft.password} onClick={() => add.mutate()}>Create account</Button></div></div></Modal>}</>;
+  const add = useMutation({ mutationFn: () => api.createUser(draft), onSuccess: () => { qc.invalidateQueries({ queryKey: ["users"] }); setOpen(false); toast.success("Account created"); } }); const update = useMutation({ mutationFn: ({ id, role }: { id: string; role: Role }) => api.updateUser(id, role), onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }) }); const remove = useMutation({ mutationFn: api.deleteUser, onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }) });
+  return <>
+    <PageHeader title="People" description="Choose who can manage the network and who can only see its readings." action={<Button onClick={() => setOpen(true)}><UserPlus size={18} aria-hidden="true"/>Add a person</Button>}/>
+    <Card className="overflow-hidden">{query.isLoading ? <div className="p-6"><Skeleton className="h-72"/></div> : !query.data?.items.length ? <EmptyState icon={<Users/>} title="No one here yet" body="Add the people who should be able to sign in."/> : <div className="relative overflow-x-auto"><table className="w-full min-w-[36rem] text-[0.9375rem]">
+      <thead className="border-b border-line bg-field"><tr><th className={TH}>Person</th><th className={TH}>Role</th><th className={TH}>Last active</th><th className={TH}><span className="sr-only">Remove</span></th></tr></thead>
+      <tbody>{query.data.items.map(user => <tr key={user.id} className="border-b border-line last:border-0">
+        <td className={TD}><p className="font-semibold text-ink">{user.name}</p><p className="text-[0.8125rem] text-muted">{user.email}</p></td>
+        <td className={TD}><Select className="h-10 w-36 text-[0.9375rem]" aria-label={`Role for ${user.name}`} value={user.role} onChange={e => update.mutate({ id: user.id, role: e.target.value as Role })}><option value="admin">Admin</option><option value="manager">Manager</option><option value="viewer">Viewer</option></Select></td>
+        <td className={cn(TD, "text-muted")}>{relativeTime(user.lastActiveAt)}</td>
+        <td className={cn(TD, "text-right")}><Button variant="ghost" size="icon" aria-label={`Remove ${user.name}`} disabled={user.id === "u1"} onClick={() => remove.mutate(user.id)}><Trash2/></Button></td>
+      </tr>)}</tbody>
+    </table></div>}</Card>
+    {open && <Modal title="Add a person" body="Create their account and choose what they can do. They'll choose their own password the first time they sign in." onClose={() => setOpen(false)}>
+      <div className="space-y-5">
+        <Field label="Full name"><Input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })}/></Field>
+        <Field label="Email"><Input type="email" value={draft.email} onChange={e => setDraft({ ...draft, email: e.target.value })}/></Field>
+        <Field label="Role"><Select value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Role })}><option value="viewer">Viewer, who can look but not change anything</option><option value="manager">Manager, who looks after sensors and data</option><option value="admin">Admin, who can do everything</option></Select></Field>
+        <Field label="Temporary password"><Input type="password" value={draft.password} onChange={e => setDraft({ ...draft, password: e.target.value })}/></Field>
+        <div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button disabled={!draft.email || !draft.name || !draft.password} onClick={() => add.mutate()}>Create account</Button></div>
+      </div>
+    </Modal>}
+  </>;
 }
 
-export function AlertsPage() { const query = useQuery({ queryKey: ["alerts"], queryFn: api.alerts }); const labels = { sensor_offline: "Sensor offline", gateway_offline: "Gateway offline", low_battery: "Low battery", network_error: "Network error" }; return <><PageHeader eyebrow="Health" title="Alerts" description="Connection and battery events that may need attention."/><Card>{query.isLoading ? <div className="p-5"><Skeleton className="h-72"/></div> : query.data?.items.map(alert => <div key={alert.id} className="flex gap-4 border-b p-5 last:border-0"><div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${alert.type === "low_battery" ? "bg-amber-500/10 text-amber-600" : "bg-red-500/10 text-red-600"}`}>{alert.type === "low_battery" ? <Battery size={19}/> : <WifiOff size={19}/>}</div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium">{alert.target}</p><Badge tone={alert.type === "low_battery" ? "warning" : "danger"}>{labels[alert.type]}</Badge></div><p className="mt-1 text-sm text-[var(--muted)]">{alert.message}</p></div><time className="whitespace-nowrap text-xs text-[var(--muted)]">{relativeTime(alert.time)}</time></div>)}</Card></>;
+export function AlertsPage() {
+  const query = useQuery({ queryKey: ["alerts"], queryFn: api.alerts });
+  const labels = { sensor_offline: "Sensor offline", gateway_offline: "Gateway offline", low_battery: "Low battery", network_error: "Network error" };
+  return <>
+    <PageHeader title="Alerts" description="Gateways that stopped connecting, sensors that went quiet, batteries running low, and network errors."/>
+    <Card className="overflow-hidden"><QueryState data={query.data?.items} isLoading={query.isLoading} isError={query.isError} error={query.error} onRetry={() => query.refetch()} loading={<div className="p-6"><Skeleton className="h-72"/></div>} empty={<EmptyState icon={<Bell/>} title="Nothing needs attention" body="An alert shows up here when a gateway stops connecting, a sensor goes quiet for two hours, a battery drops to 15% or the network reports an error."/>}>
+      {items => <ul className="divide-y divide-line">{items.map(alert => <li key={alert.id} className="flex gap-4 p-5">
+        <span className={cn("grid size-10 shrink-0 place-items-center rounded-full", alert.type === "low_battery" ? "bg-warning-soft text-warning" : "bg-danger-soft text-danger")} aria-hidden="true">{alert.type === "low_battery" ? <Battery size={19}/> : <WifiOff size={19}/>}</span>
+        <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-ink">{alert.target}</p><Badge tone={alert.type === "low_battery" ? "warning" : "danger"}>{labels[alert.type]}</Badge></div><p className="mt-1 text-[0.9375rem] text-muted">{alert.message}</p></div>
+        <time dateTime={alert.time} className="whitespace-nowrap text-[0.875rem] text-muted">{relativeTime(alert.time)}</time>
+      </li>)}</ul>}
+    </QueryState></Card>
+  </>;
 }
 
 export function SettingsPage() {
-  const query = useQuery({ queryKey: ["tokens"], queryFn: api.tokens }); const qc = useQueryClient(); const [newName, setNewName] = useState(""); const [shown, setShown] = useState<string | null>(null); const create = useMutation({ mutationFn: () => api.createToken(newName), onSuccess: token => { setShown(token.token || null); setNewName(""); qc.invalidateQueries({ queryKey: ["tokens"] }); } }); const remove = useMutation({ mutationFn: api.deleteToken, onSuccess: () => qc.invalidateQueries({ queryKey: ["tokens"] }) });
-  return <><PageHeader eyebrow="Administration" title="Settings" description="Organization details, external data access, and export preferences."/><div className="grid gap-5 xl:grid-cols-[1fr_1.15fr]"><div className="space-y-5"><Card><CardHeader><PanelTitle title="Organization" body="Shown throughout the console and in exports."/></CardHeader><CardContent className="space-y-4"><Field label="Organization name"><Input defaultValue="Oberlin Campus Network"/></Field><Field label="Description"><Input defaultValue="Environmental and facilities sensor network"/></Field><Button>Save changes</Button></CardContent></Card><Card><CardHeader><PanelTitle title="Data exports" body="Set defaults for reports and external systems."/></CardHeader><CardContent className="space-y-4"><Field label="Timezone"><Select defaultValue="America/New_York"><option value="America/New_York">Eastern Time</option></Select></Field><Field label="Default format"><Select><option>CSV</option><option>JSON</option></Select></Field><Button variant="secondary">Save export settings</Button></CardContent></Card></div><Card><CardHeader><PanelTitle title="API access" body="Create secure tokens for approved external dashboards and research tools."/></CardHeader><CardContent>{shown && <div className="mb-5 rounded-xl border border-amber-500/30 bg-amber-500/8 p-4"><p className="font-medium">Copy this token now</p><p className="mt-1 text-xs text-[var(--muted)]">For security, it will not be shown again.</p><div className="mt-3 flex gap-2"><code className="min-w-0 flex-1 break-all rounded-lg bg-[var(--surface)] p-3 text-xs">{shown}</code><Button variant="secondary" size="icon" onClick={() => navigator.clipboard.writeText(shown)}><Copy size={16}/></Button></div></div>}<div className="flex gap-2"><Input placeholder="Token name, e.g. Science dashboard" value={newName} onChange={e => setNewName(e.target.value)}/><Button disabled={!newName || create.isPending} onClick={() => create.mutate()}><KeyRound size={16}/>Create</Button></div><div className="mt-6 divide-y">{query.data?.items.map(token => <div key={token.id} className="flex items-center gap-3 py-4"><div className="rounded-lg bg-[var(--surface-muted)] p-2"><FileKey size={17}/></div><div className="flex-1"><p className="text-sm font-medium">{token.name}</p><p className="text-xs text-[var(--muted)]">Created {relativeTime(token.createdAt)} · {token.lastUsedAt ? `Used ${relativeTime(token.lastUsedAt)}` : "Never used"}</p></div><Button variant="ghost" size="icon" onClick={() => remove.mutate(token.id)} aria-label={`Delete ${token.name}`}><Trash2 size={16}/></Button></div>)}</div></CardContent></Card></div></>;
+  const query = useQuery({ queryKey: ["tokens"], queryFn: api.tokens }); const me = useQuery({ queryKey: ["me"], queryFn: api.me }); const qc = useQueryClient(); const [newName, setNewName] = useState(""); const [shown, setShown] = useState<string | null>(null); const create = useMutation({ mutationFn: () => api.createToken(newName), onSuccess: token => { setShown(token.token || null); setNewName(""); qc.invalidateQueries({ queryKey: ["tokens"] }); } }); const remove = useMutation({ mutationFn: api.deleteToken, onSuccess: () => qc.invalidateQueries({ queryKey: ["tokens"] }) });
+  return <>
+    <PageHeader title="Settings" description="Your organization's details, export preferences, and API tokens for other tools."/>
+    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_1.15fr]">
+      <div className="space-y-6">
+        <Card><CardHeader><PanelTitle title="Organization" body="Shown throughout the console and in exports."/></CardHeader><CardContent className="space-y-5"><Field label="Organization name"><Input key={me.data?.orgName ?? ""} defaultValue={me.data?.orgName ?? ""}/></Field><Field label="Description"><Input placeholder="What this network is for"/></Field><Button variant="secondary">Save changes</Button></CardContent></Card>
+        <Card><CardHeader><PanelTitle title="Exports" body="Defaults for downloads and reports."/></CardHeader><CardContent className="space-y-5"><Field label="Time zone"><Select defaultValue="America/New_York"><option value="America/New_York">Eastern Time</option></Select></Field><Field label="Default format"><Select><option>CSV</option><option>JSON</option></Select></Field><Button variant="secondary">Save export settings</Button></CardContent></Card>
+      </div>
+      <Card><CardHeader><PanelTitle title="API tokens" body="A token lets another tool, like a school dashboard or a research script, read your sensors' readings."/></CardHeader><CardContent>
+        {shown && <div className="mb-5"><Note tone="warning" icon={<KeyRound/>}><p className="font-semibold text-pine">Copy this token now</p><p className="mt-0.5 text-muted">It won't be shown again.</p><div className="mt-3 flex items-center gap-2"><code className="min-w-0 flex-1 break-all rounded-[0.75rem] bg-paper p-3 font-mono text-[0.875rem]">{shown}</code><Button variant="secondary" size="icon" aria-label="Copy token" onClick={() => navigator.clipboard.writeText(shown)}><Copy/></Button></div></Note></div>}
+        <div className="flex flex-col gap-2 sm:flex-row"><Input aria-label="Token name" placeholder="Token name, e.g. Science dashboard" value={newName} onChange={e => setNewName(e.target.value)}/><Button disabled={!newName || create.isPending} onClick={() => create.mutate()}><KeyRound size={18} aria-hidden="true"/>Create token</Button></div>
+        {query.data?.items.length === 0 && <p className="mt-6 text-[0.9375rem] text-muted">No tokens yet.</p>}
+        <ul className="mt-6 divide-y divide-line">{query.data?.items.map(token => <li key={token.id} className="flex items-center gap-3 py-4">
+          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-field text-pine" aria-hidden="true"><FileKey size={18}/></span>
+          <div className="min-w-0 flex-1"><p className="font-semibold text-ink">{token.name}</p><p className="text-[0.8125rem] text-muted">Created {relativeTime(token.createdAt)} · {token.lastUsedAt ? `Used ${relativeTime(token.lastUsedAt)}` : "Never used"}</p></div>
+          <Button variant="ghost" size="icon" onClick={() => remove.mutate(token.id)} aria-label={`Delete ${token.name}`}><Trash2/></Button>
+        </li>)}</ul>
+      </CardContent></Card>
+    </div>
+  </>;
 }
 
 export function OnboardingPage() {
@@ -261,37 +611,37 @@ export function OnboardingPage() {
   const [org, setOrg] = useState("");
   useEffect(() => { if (me.data && step === 0) { setStep(me.data.mustChangePassword ? 1 : 2); setOrg(me.data.orgName ?? ""); } }, [me.data, step]);
   const changePw = useMutation({ mutationFn: () => api.changePassword({ currentPassword: pw.current, newPassword: pw.next }),
-    onSuccess: () => { toast.success("Password updated — this account is now yours"); qc.invalidateQueries({ queryKey: ["me"] }); setStep(2); },
+    onSuccess: () => { toast.success("Password updated. This account is yours now."); qc.invalidateQueries({ queryKey: ["me"] }); setStep(2); },
     onError: (e: Error) => toast.error(e.message) });
   const saveOrg = useMutation({ mutationFn: () => api.completeOnboarding({ orgName: org.trim() }),
     onSuccess: (r) => { toast.success(`Welcome, ${r.orgName}!`); qc.invalidateQueries({ queryKey: ["me"] }); setStep(3); },
     onError: (e: Error) => toast.error(e.message) });
   const steps = [
-    { title: "Secure your account", body: "Replace the temporary password your administrator gave you.", icon: <ShieldCheck/> },
+    { title: "Choose your own password", body: "Replace the temporary password your administrator gave you.", icon: <ShieldCheck/> },
     { title: "Name your organization", body: "This name appears across the whole console.", icon: <Users/> },
-    { title: "You are all set", body: "Add a gateway, then your first sensor.", icon: <Activity/> },
+    { title: "You're all set", body: "Add a gateway first, then your first sensor.", icon: <Activity/> },
   ];
-  if (step === 0) return <div className="mx-auto max-w-3xl"><Skeleton className="h-72"/></div>;
+  if (step === 0) return <div className="mx-auto max-w-3xl"><Skeleton className="h-72 rounded-[1.25rem]"/></div>;
   return <div className="mx-auto max-w-3xl">
-    <PageHeader eyebrow="First-run setup" title="Set up your account" description="Two quick steps make this account and workspace yours."/>
-    <Card><CardContent className="pt-6">
-      <div className="flex items-start gap-4"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">{steps[step - 1].icon}</div><div><p className="text-xs font-semibold uppercase tracking-widest text-[var(--accent)]">Step {step} of 3</p><h2 className="mt-1 text-xl font-semibold">{steps[step - 1].title}</h2><p className="mt-1 text-sm text-[var(--muted)]">{steps[step - 1].body}</p></div></div>
-      <div className="my-7 border-t"/>
-      {step === 1 && <div className="max-w-md space-y-4">
+    <PageHeader title="Set up your account" description="Choose your own password and check your organization's name. Then you're ready to add a gateway and sensors."/>
+    <Steps labels={["Password", "Organization", "Start"]} current={step}/>
+    <Card><CardContent className="pt-6 sm:pt-7">
+      <div className="flex items-start gap-4"><span className="grid size-12 shrink-0 place-items-center rounded-full bg-field text-pine [&_svg]:size-5" aria-hidden="true">{steps[step - 1].icon}</span><div><h2 className="text-[1.25rem]">{steps[step - 1].title}</h2><p className="mt-1 text-[0.9375rem] text-muted">{steps[step - 1].body}</p></div></div>
+      <div className="my-7 border-t border-line"/>
+      {step === 1 && <div className="max-w-md space-y-5">
         <Field label="Temporary password"><Input type="password" autoComplete="current-password" value={pw.current} onChange={e => setPw({ ...pw, current: e.target.value })}/></Field>
         <Field label="New password" hint="At least 8 characters. Pick something only you know."><Input type="password" autoComplete="new-password" value={pw.next} onChange={e => setPw({ ...pw, next: e.target.value })}/></Field>
         <Field label="Confirm new password"><Input type="password" autoComplete="new-password" value={pw.confirm} onChange={e => setPw({ ...pw, confirm: e.target.value })}/></Field>
       </div>}
-      {step === 2 && <div className="max-w-md"><Field label="Organization name" hint="Your school or team, e.g. Oberlin. Everyone in this workspace sees it."><Input value={org} onChange={e => setOrg(e.target.value)} placeholder="e.g. Oberlin"/></Field></div>}
-      {step === 3 && <div className="grid gap-4 sm:grid-cols-2">
-        <div className="rounded-xl border border-dashed p-6 text-center"><RadioTower className="mx-auto text-[var(--accent)]"/><p className="mt-3 font-medium">Connect your gateway</p><p className="mt-1 text-sm text-[var(--muted)]">Register it and we will hand you the exact settings to type into it.</p><Link href="/gateways" className="mt-4 inline-block"><Button variant="secondary">Open gateway setup</Button></Link></div>
-        <div className="rounded-xl border border-dashed p-6 text-center"><Activity className="mx-auto text-[var(--accent)]"/><p className="mt-3 font-medium">Add your first sensor</p><p className="mt-1 text-sm text-[var(--muted)]">Pick the type, get a secure key, and follow the written steps.</p><Link href="/sensors/new" className="mt-4 inline-block"><Button>Open sensor setup</Button></Link></div>
+      {step === 2 && <div className="max-w-md"><Field label="Organization name" hint="Your school or team, for example Oberlin. Everyone in this workspace sees it."><Input value={org} onChange={e => setOrg(e.target.value)} placeholder="e.g. Oberlin"/></Field></div>}
+      {step === 3 && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="rounded-[1rem] bg-field p-6"><span className="grid size-10 place-items-center rounded-full bg-paper text-pine" aria-hidden="true"><RadioTower size={18}/></span><p className="mt-4 font-semibold text-pine">Connect your gateway</p><p className="mt-1 text-[0.9375rem] text-muted">Register it and we'll give you the exact settings to type into it.</p><ButtonLink href="/gateways" variant="secondary" size="sm" className="mt-5">Set up a gateway</ButtonLink></div>
+        <div className="rounded-[1rem] bg-field p-6"><span className="grid size-10 place-items-center rounded-full bg-paper text-pine" aria-hidden="true"><Activity size={18}/></span><p className="mt-4 font-semibold text-pine">Add your first sensor</p><p className="mt-1 text-[0.9375rem] text-muted">Pick its type, get a secure key, and follow the written steps.</p><ButtonLink href="/sensors/new" variant="secondary" size="sm" className="mt-5">Add a sensor</ButtonLink></div>
       </div>}
-      <div className="mt-7 flex justify-between">
-        <span/>
-        {step === 1 && <Button disabled={changePw.isPending || pw.next.length < 8 || pw.next !== pw.confirm || !pw.current} onClick={() => changePw.mutate()}>{changePw.isPending ? "Saving…" : "Set new password"}<ArrowRight size={16}/></Button>}
-        {step === 2 && <Button disabled={saveOrg.isPending || org.trim().length < 2} onClick={() => saveOrg.mutate()}>{saveOrg.isPending ? "Saving…" : "Save organization"}<ArrowRight size={16}/></Button>}
-        {step === 3 && <Button onClick={() => router.push("/")}>Go to my dashboard<ArrowRight size={16}/></Button>}
+      <div className="mt-7 flex justify-end">
+        {step === 1 && <Button disabled={changePw.isPending || pw.next.length < 8 || pw.next !== pw.confirm || !pw.current} onClick={() => changePw.mutate()}>{changePw.isPending ? "Saving…" : "Set new password"}<ArrowRight size={18} aria-hidden="true"/></Button>}
+        {step === 2 && <Button disabled={saveOrg.isPending || org.trim().length < 2} onClick={() => saveOrg.mutate()}>{saveOrg.isPending ? "Saving…" : "Save organization"}<ArrowRight size={18} aria-hidden="true"/></Button>}
+        {step === 3 && <Button onClick={() => router.push("/")}>Go to the overview<ArrowRight size={18} aria-hidden="true"/></Button>}
       </div>
     </CardContent></Card>
   </div>;

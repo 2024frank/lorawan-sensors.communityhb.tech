@@ -1,12 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="8" fill="#0d1c14"/>
-  <g transform="translate(4 4)" fill="none" stroke="#2ee59a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9"/>
-    <path d="M7.8 4.7a6.14 6.14 0 0 0-.8 7.5"/>
-    <circle cx="12" cy="9" r="2"/>
-    <path d="M16.2 4.8c2 2 2.26 5.11.8 7.47"/>
-    <path d="M19.1 1.9a9.9 9.9 0 0 1 0 14.1"/>
-    <path d="M9.5 18h5"/>
-    <path d="m8 22 4-11 4 11"/>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="LoRaWAN"><circle cx="128" cy="128" r="128" fill="#57B950"/><g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round"><g stroke-width="20"><path d="M89.7 71.9 A50 50 0 0 0 89.7 136.1"/><path d="M166.3 71.9 A50 50 0 0 1 166.3 136.1"/></g><g stroke-width="22"><path d="M128 120 L102 206"/><path d="M128 120 L154 206"/><path d="M111.5 176 L144.5 176"/><path d="M94 206 L162 206"/></g></g><circle cx="128" cy="104" r="17" fill="#fff"/></svg>

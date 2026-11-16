@@ -11,6 +11,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
     if (ready) return;
     import("@/mocks/browser").then(({ worker }) => worker.start({ onUnhandledRequest: "bypass" })).then(() => setReady(true));
   }, [ready]);
-  if (!ready) return <div className="min-h-screen bg-[var(--background)] p-6"><div className="mx-auto max-w-7xl animate-pulse"><div className="h-8 w-36 rounded bg-[var(--surface-muted)]"/><div className="mt-24 grid gap-4 md:grid-cols-3"><div className="h-32 rounded-xl bg-[var(--surface-muted)]"/><div className="h-32 rounded-xl bg-[var(--surface-muted)]"/><div className="h-32 rounded-xl bg-[var(--surface-muted)]"/></div></div></div>;
-  return <QueryClientProvider client={client}>{children}<Toaster richColors position="top-right" /></QueryClientProvider>;
+  if (!ready) return <div className="min-h-screen bg-paper p-6" role="status" aria-busy="true"><span className="sr-only">Loading…</span><div className="mx-auto max-w-7xl animate-pulse motion-reduce:animate-none"><div className="h-10 w-44 rounded-full bg-field"/><div className="mt-24 grid gap-4 md:grid-cols-3"><div className="h-36 rounded-[1.25rem] bg-field"/><div className="h-36 rounded-[1.25rem] bg-field"/><div className="h-36 rounded-[1.25rem] bg-field"/></div></div></div>;
+  return <QueryClientProvider client={client}>{children}<Toaster position="top-right" toastOptions={{ style: { borderRadius: 16, border: "1px solid var(--line)", background: "var(--paper)", color: "var(--ink)", fontFamily: "var(--font-figtree), ui-sans-serif, sans-serif", fontSize: 15 } }} /></QueryClientProvider>;
 }

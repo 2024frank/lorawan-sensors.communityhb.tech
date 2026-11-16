@@ -69,7 +69,7 @@ export function SkeletonList({ rows = 3, className }: { rows?: number; className
     <div className={className ?? "space-y-2"} role="status" aria-busy="true" aria-live="polite">
       <span className="sr-only">Loading…</span>
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="h-14 animate-pulse rounded-lg bg-[var(--surface-muted)]"
+        <div key={i} className="h-14 animate-pulse rounded-[0.75rem] bg-field motion-reduce:animate-none"
           style={{ opacity: 1 - i * 0.12 }} />
       ))}
     </div>
@@ -78,21 +78,21 @@ export function SkeletonList({ rows = 3, className }: { rows?: number; className
 
 function DefaultEmpty() {
   return (
-    <div className="grid place-items-center rounded-xl border border-dashed border-[var(--border)] p-10 text-center">
-      <p className="font-medium">Nothing here yet</p>
-      <p className="mt-1 max-w-sm text-sm text-[var(--muted)]">When there's data to show, it'll appear here.</p>
+    <div className="grid place-items-center rounded-[1.25rem] bg-field px-6 py-12 text-center">
+      <p className="text-[1.0625rem] font-semibold text-pine">Nothing here yet</p>
+      <p className="mt-1.5 max-w-sm text-[0.9375rem] text-muted">This fills in as soon as there is something to show.</p>
     </div>
   );
 }
 
 function DefaultError({ error, onRetry }: { error: Error; onRetry?: () => void }) {
   return (
-    <div role="alert" className="grid place-items-center rounded-xl border border-red-500/25 bg-red-500/[0.04] p-10 text-center">
-      <p className="font-medium text-red-700 dark:text-red-300">Couldn't load this</p>
-      <p className="mt-1 max-w-sm text-sm text-[var(--muted)]">{error.message}</p>
+    <div role="alert" className="grid place-items-center rounded-[1.25rem] bg-danger-soft px-6 py-12 text-center">
+      <p className="text-[1.0625rem] font-semibold text-danger">This didn't load</p>
+      <p className="mt-1.5 max-w-sm text-[0.9375rem] text-muted">{error.message}</p>
       {onRetry && (
         <button onClick={onRetry}
-          className="mt-4 rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]">
+          className="mt-5 inline-flex min-h-10 items-center rounded-full border border-[color-mix(in_srgb,var(--pine)_22%,transparent)] bg-paper px-4 text-[0.9375rem] font-semibold text-pine hover:bg-field">
           Try again
         </button>
       )}
