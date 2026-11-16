@@ -34,29 +34,29 @@ export interface MetricCardProps {
 
 const ARROW = { up: "↑", down: "↓", flat: "→" } as const;
 const TONE = {
-  good: "text-emerald-600 dark:text-emerald-400",
-  bad: "text-red-600 dark:text-red-400",
-  neutral: "text-[var(--muted)]",
+  good: "text-success",
+  bad: "text-danger",
+  neutral: "text-muted",
 } as const;
 
 export function MetricCard({ label, value, icon, hint, trend, isLoading, className }: MetricCardProps) {
   return (
-    <div className={`rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ${className ?? ""}`}>
+    <div className={`rounded-[1.25rem] border border-line bg-paper p-5 sm:p-6 ${className ?? ""}`}>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-[var(--muted)]">{label}</p>
-        {icon && <span className="rounded-lg bg-[var(--surface-muted)] p-2 text-[var(--accent)]" aria-hidden="true">{icon}</span>}
+        <p className="text-[0.9375rem] font-semibold text-ink">{label}</p>
+        {icon && <span className="grid size-10 place-items-center rounded-full bg-field text-pine [&_svg]:size-[1.125rem]" aria-hidden="true">{icon}</span>}
       </div>
 
       {isLoading ? (
-        <div className="mt-3 h-8 w-24 animate-pulse rounded bg-[var(--surface-muted)]" role="status" aria-label={`${label} loading`} />
+        <div className="mt-3 h-9 w-24 animate-pulse rounded-[0.5rem] bg-field motion-reduce:animate-none" role="status" aria-label={`${label} loading`} />
       ) : (
-        <p className="mt-3 break-words text-3xl font-semibold tracking-[-0.02em] tabular-nums">
-          {value ?? <span className="text-[var(--muted)]">—</span>}
+        <p className="mt-3 break-words text-[2rem] leading-tight font-semibold tracking-[-0.025em] text-pine tabular-nums">
+          {value ?? <span className="text-muted">—</span>}
         </p>
       )}
 
       {!isLoading && (trend || hint) && (
-        <div className="mt-1 flex items-center gap-2 text-xs">
+        <div className="mt-1.5 flex items-center gap-2 text-[0.875rem]">
           {trend && (
             <span className={`inline-flex items-center gap-0.5 font-medium ${TONE[trend.tone ?? "neutral"]}`}>
               <span aria-hidden="true">{ARROW[trend.direction]}</span>
@@ -66,7 +66,7 @@ export function MetricCard({ label, value, icon, hint, trend, isLoading, classNa
               </span>
             </span>
           )}
-          {hint && <span className="text-[var(--muted)]">{hint}</span>}
+          {hint && <span className="text-muted">{hint}</span>}
         </div>
       )}
     </div>

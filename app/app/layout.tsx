@@ -1,31 +1,35 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Comfortaa, Figtree } from "next/font/google";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Community Hub's type: Figtree for every word, Comfortaa only in the wordmark.
+const figtree = Figtree({
+  variable: "--font-figtree",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const comfortaa = Comfortaa({
+  variable: "--font-comfortaa",
   subsets: ["latin"],
+  weight: ["700"],
 });
+
+const DESCRIPTION = "LoRaWAN makes it easy for schools and campuses to run their own private network of environmental sensors.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"),
   title: { default: "LoRaWAN Console", template: "%s · LoRaWAN Console" },
-  description: "A clear, secure way to run your organization's private LoRaWAN network.",
+  description: DESCRIPTION,
   openGraph: {
     title: "LoRaWAN Console — Community Hub",
-    description: "LoRaWAN gateways, sensors, readings, downlinks, and network health in one secure platform.",
+    description: DESCRIPTION,
     images: [{ url: "/og.png", width: 1731, height: 909, alt: "LoRaWAN campus sensor network" }],
   },
-  twitter: { card: "summary_large_image", title: "LoRaWAN · Community Hub", description: "Your LoRaWAN network. One clear picture.", images: ["/og.png"] },
+  twitter: { card: "summary_large_image", title: "LoRaWAN · Community Hub", description: DESCRIPTION, images: ["/og.png"] },
   icons: {
-    icon: "/favicon.svg?v=2",
-    shortcut: "/favicon.svg?v=2",
+    icon: "/favicon.svg?v=3",
+    shortcut: "/favicon.svg?v=3",
   },
 };
 
@@ -36,9 +40,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className={`${figtree.variable} ${comfortaa.variable} antialiased`}>
         <Providers>{children}</Providers>
       </body>
     </html>

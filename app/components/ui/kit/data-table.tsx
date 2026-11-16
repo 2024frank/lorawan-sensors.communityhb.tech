@@ -75,26 +75,26 @@ export function DataTable<T>({
   }
 
   if (isLoading) return <SkeletonList rows={5} />;
-  if (!rows.length) return <>{empty ?? <div className="p-8 text-center text-sm text-[var(--muted)]">No rows to show.</div>}</>;
+  if (!rows.length) return <>{empty ?? <div className="p-8 text-center text-[0.9375rem] text-muted">There is nothing to list yet.</div>}</>;
 
   return (
     // Labelled + focusable so wide tables scroll without the page scrolling.
     <div role="region" aria-label={caption} tabIndex={0}
-      className={`overflow-x-auto rounded-xl border border-[var(--border)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] ${className ?? ""}`}>
-      <table className="w-full min-w-[32rem] border-collapse text-sm">
+      className={`relative overflow-x-auto rounded-[1.25rem] border border-line ${className ?? ""}`}>
+      <table className="w-full min-w-[32rem] border-collapse text-[0.9375rem]">
         <caption className="sr-only">{caption}</caption>
         <thead>
-          <tr className="border-b border-[var(--border)] bg-[var(--surface-muted)]/50">
+          <tr className="border-b border-line bg-field">
             {columns.map((c) => {
               const active = sort?.key === c.key;
               const ariaSort = !c.sortValue ? undefined : active ? (sort!.dir === 1 ? "ascending" : "descending") : "none";
               return (
                 <th key={c.key} scope="col" aria-sort={ariaSort as any}
-                  className={`px-4 py-3 font-medium text-[var(--muted)] ${c.align === "right" ? "text-right" : "text-left"} ${c.hideOnMobile ? "hidden sm:table-cell" : ""}`}
+                  className={`px-4 py-3 text-[0.875rem] font-semibold text-ink ${c.align === "right" ? "text-right" : "text-left"} ${c.hideOnMobile ? "hidden sm:table-cell" : ""}`}
                   style={c.width ? { width: c.width } : undefined}>
                   {c.sortValue ? (
                     <button onClick={() => toggleSort(c.key)}
-                      className="inline-flex items-center gap-1 hover:text-[var(--foreground)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]">
+                      className="inline-flex items-center gap-1 hover:text-pine">
                       {c.header}
                       <span aria-hidden="true" className="text-[10px]">{active ? (sort!.dir === 1 ? "▲" : "▼") : "↕"}</span>
                     </button>
@@ -117,7 +117,7 @@ export function DataTable<T>({
                     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onRowClick!(row); }
                   },
                 })}
-                className={`border-b border-[var(--border)] last:border-0 ${interactive ? "cursor-pointer hover:bg-[var(--surface-muted)]/40 focus-visible:bg-[var(--surface-muted)]/60 focus-visible:outline-none" : ""}`}>
+                className={`border-b border-line last:border-0 ${interactive ? "cursor-pointer hover:bg-field focus-visible:bg-field" : ""}`}>
                 {columns.map((c) => (
                   <td key={c.key}
                     className={`px-4 py-3 ${c.align === "right" ? "text-right tabular-nums" : "text-left"} ${c.hideOnMobile ? "hidden sm:table-cell" : ""}`}>

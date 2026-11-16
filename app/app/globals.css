@@ -1,73 +1,195 @@
 @import "tailwindcss";
 
+/* Dark mode follows the console's own theme switch (the .dark class on <html>), never the OS. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * The console follows Community Hub's design system (communityhub.cloud, DESIGN.md):
+ * a white page, pine headings, leaf links, lime only for the main action on a screen,
+ * Figtree for every word and Comfortaa only in the wordmark. Flat surfaces separated
+ * by hairlines; shadows only on things that float.
+ */
 :root {
-  --background: #f4f7f5;
-  --foreground: #0d1c14;
-  --surface: #ffffff;
-  --surface-muted: #eef2ee;
-  --border: #dfe6df;
-  --muted: #68746c;
-  --accent: #0d8557;
-  --accent-strong: #086943;
-  --accent-soft: rgba(13, 133, 87, .12);
-}
+  --ink: #152019;
+  --pine: #123a29;
+  --leaf: #467d58;
+  --lime: #c9db87;
+  --lime-deep: #b9cd70;
+  --lime-pale: #f2f6e1;
+  --paper: #ffffff;
+  --field: #f4f6f1;
+  --line: #e2e6dd;
+  --water: #e2ece8;
+  --sky: #2f6f7d;
+  --sand: #d6c8ae;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  /* Fixed brand colours: the lime button keeps pine text and the pine panel stays pine in both themes. */
+  --on-lime: #123a29;
+  --pine-panel: #123a29;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0c120f;
-    --foreground: #eef6f0;
-    --surface: #121b16;
-    --surface-muted: #1b2820;
-    --border: #26382d;
-    --muted: #9aaaa0;
-    --accent: #31a86e;
-    --accent-strong: #258c5a;
-    --accent-soft: rgba(49, 168, 110, .16);
-  }
-}
+  --heading: var(--pine);
+  --muted: color-mix(in srgb, var(--ink) 74%, var(--paper));
+  --control-border: color-mix(in srgb, var(--ink) 42%, var(--paper));
+  --success: #2f6b45;
+  --success-soft: #e8f1e0;
+  --warning: #8a5300;
+  --warning-soft: #fbf0d9;
+  --danger: #b42318;
+  --danger-soft: #fdecea;
+  --info: var(--sky);
+  --info-soft: var(--water);
 
-.dark {
-  --background: #0c120f;
-  --foreground: #eef6f0;
-  --surface: #121b16;
-  --surface-muted: #1b2820;
-  --border: #26382d;
-  --muted: #9aaaa0;
-  --accent: #31a86e;
-  --accent-strong: #258c5a;
-  --accent-soft: rgba(49, 168, 110, .16);
-  color-scheme: dark;
-}
+  /* Older names the screens still use. */
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --surface: var(--paper);
+  --surface-muted: var(--field);
+  --border: var(--line);
+  --accent: var(--leaf);
+  --accent-strong: var(--pine);
+  --accent-soft: var(--lime-pale);
 
-.light {
-  --background: #f6f8f6;
-  --foreground: #142019;
-  --surface: #ffffff;
-  --surface-muted: #eef2ee;
-  --border: #dfe6df;
-  --muted: #68746c;
-  --accent: #167a4b;
-  --accent-strong: #0e663d;
-  --accent-soft: rgba(22, 122, 75, .14);
   color-scheme: light;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
-  min-height: 100vh;
+/* An optional dark theme, chosen with the moon button: the same greens, turned down. */
+.dark {
+  --ink: #e6ede7;
+  --pine: #dfeadb;
+  --leaf: #93c4a0;
+  --lime-pale: #233020;
+  --paper: #0e1712;
+  --field: #16231b;
+  --line: #273a2e;
+  --water: #16292c;
+  --sky: #86bcc7;
+  --muted: color-mix(in srgb, var(--ink) 70%, var(--paper));
+  --control-border: color-mix(in srgb, var(--ink) 34%, var(--paper));
+  --success: #8fd0a1;
+  --success-soft: rgb(143 208 161 / 0.14);
+  --warning: #f0c36b;
+  --warning-soft: rgb(240 195 107 / 0.14);
+  --danger: #ff9b8f;
+  --danger-soft: rgb(255 155 143 / 0.14);
+  color-scheme: dark;
 }
 
-body::before { content: ""; position: fixed; inset: 0; pointer-events: none; background-image: radial-gradient(circle at 12% 0%, rgba(13,133,87,.045), transparent 24%); z-index: -1; }
+@theme inline {
+  --color-ink: var(--ink);
+  --color-pine: var(--pine);
+  --color-leaf: var(--leaf);
+  --color-lime: var(--lime);
+  --color-lime-deep: var(--lime-deep);
+  --color-lime-pale: var(--lime-pale);
+  --color-paper: var(--paper);
+  --color-field: var(--field);
+  --color-line: var(--line);
+  --color-water: var(--water);
+  --color-sky: var(--sky);
+  --color-sand: var(--sand);
+  --color-muted: var(--muted);
+  --color-on-lime: var(--on-lime);
+  --color-pine-panel: var(--pine-panel);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
+  --font-brand: var(--font-comfortaa), var(--font-figtree), ui-sans-serif, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
 
-* { border-color: var(--border); }
-button, a, input, select { -webkit-tap-highlight-color: transparent; }
-::selection { background: var(--accent-soft); }
+@layer base {
+  * {
+    border-color: var(--line);
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    caret-color: var(--leaf);
+    scrollbar-color: color-mix(in srgb, var(--pine) 32%, transparent) transparent;
+  }
+  body {
+    min-height: 100vh;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.55;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    color: var(--heading);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  a {
+    text-underline-offset: 0.22em;
+    text-decoration-thickness: 1px;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--leaf);
+    outline-offset: 3px;
+  }
+  ::selection {
+    background: var(--lime);
+    color: var(--on-lime);
+  }
+  ::placeholder {
+    color: color-mix(in srgb, var(--ink) 50%, var(--paper));
+  }
+  a,
+  button,
+  input,
+  select {
+    -webkit-tap-highlight-color: transparent;
+  }
+  table,
+  time,
+  [data-numbers] {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* The select chevron, in leaf so it reads in both themes. */
+@utility field-chevron {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23467d58' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.875rem center;
+  background-size: 1.125rem;
+}
+
+/* Leaf green means a link: underlined, going solid on hover. */
+@utility link {
+  font-weight: 600;
+  color: var(--leaf);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--leaf) 45%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.25em;
+  transition: color 160ms ease, text-decoration-color 160ms ease;
+  &:hover {
+    color: var(--pine);
+    text-decoration-color: currentColor;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+}

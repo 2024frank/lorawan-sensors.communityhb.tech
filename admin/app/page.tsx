@@ -44,23 +44,23 @@ async function req(path: string, token: string | null, init: RequestInit = {}) {
   return data;
 }
 
-const card = "rounded-2xl border border-emerald-100/10 bg-[#101b16] p-6";
-const input = "w-full rounded-lg border border-emerald-100/15 bg-[#0b1210] px-3 py-2 text-sm outline-none focus:border-emerald-400/60";
-const label = "mb-1 block text-xs font-medium text-emerald-100/50";
-const btn = "rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-[#04150c] hover:bg-emerald-400 disabled:opacity-40";
-const btnGhost = "rounded-lg border border-emerald-100/15 px-3 py-1.5 text-xs text-emerald-100/70 hover:bg-emerald-100/5";
+const card = "rounded-[1.25rem] border border-line bg-paper p-6";
+const input = "h-12 w-full rounded-[0.75rem] border border-[var(--control-border)] bg-paper px-4 text-base text-ink outline-none focus:border-leaf focus:ring-3 focus:ring-[color-mix(in_srgb,var(--leaf)_22%,transparent)]";
+const label = "mb-2 block text-[0.875rem] font-semibold text-ink";
+const btn = "inline-flex min-h-12 items-center justify-center rounded-full bg-lime px-6 text-base font-semibold text-on-lime transition-colors hover:bg-lime-deep disabled:opacity-45";
+const btnGhost = "inline-flex min-h-10 items-center rounded-full border border-[color-mix(in_srgb,var(--pine)_22%,transparent)] bg-paper px-4 text-[0.9375rem] font-semibold text-pine transition-colors hover:bg-field disabled:opacity-45";
 
 function Header({ me, onLogout }: { me: Me | null; onLogout: () => void }) {
   return (
-    <header className="mb-8 flex items-center justify-between">
-      <div className="flex items-center gap-3">
-        <img src="/favicon.svg" alt="" className="h-10 w-10 rounded-xl"/>
-        <div>
-          <div className="text-lg font-semibold tracking-tight">LoRaWAN <span className="text-emerald-400">Operator</span></div>
-          <div className="text-[10px] uppercase tracking-[0.2em] text-emerald-100/40">Platform console</div>
+    <header className="mb-10 flex flex-wrap items-center justify-between gap-4">
+      <div className="flex items-center gap-2.5">
+        <img src="/icon-lorawan.svg" alt="" width={36} height={36} className="size-9 shrink-0"/>
+        <div className="font-brand leading-none">
+          <p className="text-[1.1875rem] font-bold tracking-[-0.01em] text-pine">LoRaWAN <span className="text-leaf">Operator</span></p>
+          <p className="mt-1 text-[0.8125rem] font-bold text-leaf">by Community Hub</p>
         </div>
       </div>
-      {me && <div className="flex items-center gap-3 text-sm text-emerald-100/60">{me.email}<button className={btnGhost} onClick={onLogout}>Sign out</button></div>}
+      {me && <div className="flex items-center gap-3 text-[0.9375rem] text-muted">{me.email}<button className={btnGhost} onClick={onLogout}>Sign out</button></div>}
     </header>
   );
 }
@@ -81,13 +81,13 @@ function Login({ onToken }: { onToken: (t: string, me: Me) => void }) {
   }
   return (
     <form onSubmit={submit} className={`${card} mx-auto mt-16 max-w-sm`}>
-      <h1 className="mb-1 text-xl font-semibold">Operator sign in</h1>
-      <p className="mb-5 text-sm text-emerald-100/50">Onboard organizations and provision their people.</p>
+      <h1 className="mb-1 text-[1.75rem] leading-tight tracking-[-0.026em]">Operator sign in</h1>
+      <p className="mb-6 text-[0.9375rem] text-muted">For the people who set up organizations and their accounts.</p>
       <label className={label}>Email</label>
       <input className={input} value={email} onChange={e => setEmail(e.target.value)} autoComplete="username"/>
       <label className={`${label} mt-4`}>Password</label>
       <input className={input} type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password"/>
-      {err && <p className="mt-3 rounded-lg bg-red-500/10 p-2.5 text-xs text-red-300">{err}</p>}
+      {err && <p role="alert" className="mt-4 rounded-[0.75rem] bg-danger-soft p-3 text-[0.9375rem] text-danger">{err}</p>}
       <button className={`${btn} mt-5 w-full`} disabled={busy || !password}>{busy ? "Signing in…" : "Sign in"}</button>
     </form>
   );
@@ -95,13 +95,13 @@ function Login({ onToken }: { onToken: (t: string, me: Me) => void }) {
 
 function Result({ r, onClose }: { r: { title: string; email: string; tempPassword?: string; emailSent?: boolean; emailError?: string }; onClose: () => void }) {
   return (
-    <div className="mt-4 rounded-xl border border-emerald-400/30 bg-emerald-400/5 p-4 text-sm">
+    <div className="mt-4 rounded-[1rem] bg-success-soft p-5 text-[0.9375rem]">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="font-semibold text-emerald-300">{r.title}</p>
-          <p className="mt-2 text-emerald-100/70">Login: <span className="font-mono">{r.email}</span></p>
-          {r.tempPassword && <p className="text-emerald-100/70">Temporary password: <span className="font-mono font-bold">{r.tempPassword}</span></p>}
-          <p className="mt-2 text-xs text-emerald-100/50">
+          <p className="font-semibold text-pine">{r.title}</p>
+          <p className="mt-2 text-muted">Login: <span className="font-mono">{r.email}</span></p>
+          {r.tempPassword && <p className="text-muted">Temporary password: <span className="font-mono font-bold">{r.tempPassword}</span></p>}
+          <p className="mt-2 text-xs text-muted">
             {r.emailSent ? "✓ Welcome email delivered — they have everything they need." :
               r.emailError ? `Email failed (${r.emailError}) — hand them the login above yourself.` :
               "No email sent — hand them the login above yourself."}
@@ -157,8 +157,8 @@ export default function OperatorConsole() {
   async function createOrg(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setErr("");
     try {
-      const d = await req("/orgs", token, { method: "POST", body: JSON.stringify({ orgName: org.name, adminName: org.adminName, adminEmail: org.adminEmail, sendEmail: org.sendEmail }) }) as { org: { name: string }; admin: { email: string }; tempPassword: string; emailSent?: boolean; emailError?: string };
-      setResult({ title: `${d.org.name} onboarded — 12 sensor types ready`, email: d.admin.email, tempPassword: d.tempPassword, emailSent: d.emailSent, emailError: d.emailError });
+      const d = await req("/orgs", token, { method: "POST", body: JSON.stringify({ orgName: org.name, adminName: org.adminName, adminEmail: org.adminEmail, sendEmail: org.sendEmail }) }) as { org: { name: string }; admin: { email: string }; tempPassword: string; sensorTypesCloned?: number; emailSent?: boolean; emailError?: string };
+      setResult({ title: `${d.org.name} is set up${d.sensorTypesCloned ? ` with ${d.sensorTypesCloned} sensor types` : ""}`, email: d.admin.email, tempPassword: d.tempPassword, emailSent: d.emailSent, emailError: d.emailError });
       setOrg({ name: "", adminName: "", adminEmail: "", sendEmail: true });
       await loadOrgs(token!);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
@@ -197,18 +197,18 @@ export default function OperatorConsole() {
       <Header me={me} onLogout={logout}/>
       {!token || !me ? <Login onToken={onToken}/> : (
         <>
-          {err && <p className="mb-4 rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{err}</p>}
+          {err && <p role="alert" className="mb-4 rounded-[0.75rem] bg-danger-soft p-3.5 text-[0.9375rem] text-danger">{err}</p>}
           {result && <Result r={result} onClose={() => setResult(null)}/>}
 
           <section className={`${card} mt-6`}>
             <h2 className="text-lg font-semibold">Onboard a new organization</h2>
-            <p className="mt-1 text-sm text-emerald-100/50">Creates their private workspace, installs the 12 sensor types, and provisions their admin. First sign-in forces a password change.</p>
+            <p className="mt-1 text-[0.9375rem] text-muted">This creates their private workspace, copies in your sensor types and sets up their first admin, who chooses a new password at first sign-in.</p>
             <form onSubmit={createOrg} className="mt-5 grid gap-4 sm:grid-cols-2">
               <div><label className={label}>Organization name</label><input className={input} required value={org.name} onChange={e => setOrg({ ...org, name: e.target.value })} placeholder="Kenyon College"/></div>
               <div><label className={label}>Admin name</label><input className={input} required value={org.adminName} onChange={e => setOrg({ ...org, adminName: e.target.value })} placeholder="Jane Smith"/></div>
               <div className="sm:col-span-2"><label className={label}>Admin email</label><input className={input} type="email" required value={org.adminEmail} onChange={e => setOrg({ ...org, adminEmail: e.target.value })} placeholder="sensors@kenyon.edu"/></div>
-              <label className="flex items-center gap-2 text-sm text-emerald-100/70 sm:col-span-2">
-                <input type="checkbox" checked={org.sendEmail} onChange={e => setOrg({ ...org, sendEmail: e.target.checked })} className="h-4 w-4 accent-emerald-500"/>
+              <label className="flex items-center gap-2 text-sm text-muted sm:col-span-2">
+                <input type="checkbox" checked={org.sendEmail} onChange={e => setOrg({ ...org, sendEmail: e.target.checked })} className="h-4 w-4 accent-[#467d58]"/>
                 Send them the welcome email (login + temporary password)
               </label>
               <div className="sm:col-span-2"><button className={btn} disabled={busy}>{busy ? "Creating…" : "Create organization"}</button></div>
@@ -223,12 +223,12 @@ export default function OperatorConsole() {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <p className="font-semibold">{o.name}</p>
-                      <p className="mt-0.5 text-xs text-emerald-100/40">{o.users} user{o.users === 1 ? "" : "s"} · since {new Date(o.createdAt).toLocaleDateString()}</p>
+                      <p className="mt-0.5 text-xs text-muted">{o.users} user{o.users === 1 ? "" : "s"} · since {new Date(o.createdAt).toLocaleDateString()}</p>
                     </div>
                     <button className={btnGhost} onClick={() => setUserOrg(userOrg === o.id ? null : o.id)}>{userOrg === o.id ? "Cancel" : "Add user"}</button>
                   </div>
                   {userOrg === o.id && (
-                    <form onSubmit={e => addUser(e, o.id, o.name)} className="mt-4 grid gap-3 border-t border-emerald-100/10 pt-4 sm:grid-cols-3">
+                    <form onSubmit={e => addUser(e, o.id, o.name)} className="mt-4 grid gap-3 border-t border-line pt-4 sm:grid-cols-3">
                       <div><label className={label}>Name</label><input className={input} required value={nu.name} onChange={e => setNu({ ...nu, name: e.target.value })}/></div>
                       <div><label className={label}>Email</label><input className={input} type="email" required value={nu.email} onChange={e => setNu({ ...nu, email: e.target.value })}/></div>
                       <div><label className={label}>Role</label>
@@ -236,8 +236,8 @@ export default function OperatorConsole() {
                           <option value="admin">admin</option><option value="manager">manager</option><option value="viewer">viewer</option>
                         </select>
                       </div>
-                      <label className="flex items-center gap-2 text-sm text-emerald-100/70 sm:col-span-2">
-                        <input type="checkbox" checked={nu.sendEmail} onChange={e => setNu({ ...nu, sendEmail: e.target.checked })} className="h-4 w-4 accent-emerald-500"/>
+                      <label className="flex items-center gap-2 text-sm text-muted sm:col-span-2">
+                        <input type="checkbox" checked={nu.sendEmail} onChange={e => setNu({ ...nu, sendEmail: e.target.checked })} className="h-4 w-4 accent-[#467d58]"/>
                         Email them their login
                       </label>
                       <div className="sm:col-span-1 sm:text-right"><button className={btn} disabled={busy}>{busy ? "Adding…" : "Add user"}</button></div>
@@ -245,37 +245,37 @@ export default function OperatorConsole() {
                   )}
                 </div>
               ))}
-              {!orgs.length && <p className="text-sm text-emerald-100/40">No organizations yet.</p>}
+              {!orgs.length && <p className="text-sm text-muted">No organizations yet.</p>}
             </div>
           </section>
 
           <section className={`${card} mt-6`}>
             <h2 className="text-lg font-semibold">Platform operators</h2>
-            <p className="mt-1 text-sm text-emerald-100/50">Operators can onboard schools and manage this console. Give this only to people you fully trust.</p>
+            <p className="mt-1 text-sm text-muted">Operators can onboard schools and manage this console. Give this only to people you fully trust.</p>
             <div className="mt-4 space-y-2">
               {ops.map(o => (
-                <div key={o.id} className="flex items-center justify-between rounded-lg border border-emerald-100/10 px-4 py-2.5">
+                <div key={o.id} className="flex items-center justify-between rounded-[0.75rem] border border-line px-4 py-3">
                   <div>
                     <span className="text-sm font-medium">{o.name}</span>
-                    <span className="ml-2 text-xs text-emerald-100/40">{o.email}</span>
-                    {o.builtIn && <span className="ml-2 rounded bg-emerald-400/10 px-1.5 py-0.5 text-[10px] text-emerald-300">built-in</span>}
+                    <span className="ml-2 text-xs text-muted">{o.email}</span>
+                    {o.builtIn && <span className="ml-2 rounded-full bg-field px-2 py-0.5 text-xs font-semibold text-muted">built-in</span>}
                   </div>
                   {!o.builtIn && me && o.email !== me.email && <button className={btnGhost} disabled={busy} onClick={() => removeOperator(o.id)}>Remove</button>}
                 </div>
               ))}
             </div>
-            <form onSubmit={addOperator} className="mt-4 grid gap-3 border-t border-emerald-100/10 pt-4 sm:grid-cols-2">
+            <form onSubmit={addOperator} className="mt-4 grid gap-3 border-t border-line pt-4 sm:grid-cols-2">
               <div><label className={label}>Name</label><input className={input} required value={no.name} onChange={e => setNo({ ...no, name: e.target.value })} placeholder="Trusted teammate"/></div>
               <div><label className={label}>Email</label><input className={input} type="email" required value={no.email} onChange={e => setNo({ ...no, email: e.target.value })}/></div>
-              <label className="flex items-center gap-2 text-sm text-emerald-100/70">
-                <input type="checkbox" checked={no.sendEmail} onChange={e => setNo({ ...no, sendEmail: e.target.checked })} className="h-4 w-4 accent-emerald-500"/>
+              <label className="flex items-center gap-2 text-sm text-muted">
+                <input type="checkbox" checked={no.sendEmail} onChange={e => setNo({ ...no, sendEmail: e.target.checked })} className="h-4 w-4 accent-[#467d58]"/>
                 Email them the console invite
               </label>
               <div className="sm:text-right"><button className={btn} disabled={busy}>{busy ? "Adding…" : "Make operator"}</button></div>
             </form>
           </section>
 
-          <p className="mt-8 text-center text-xs text-emerald-100/30">Main app: <a className="text-emerald-400/70 hover:underline" href={APP_URL}>{APP_URL.replace("https://", "")}</a></p>
+          <p className="mt-10 text-center text-[0.875rem] text-muted">The console schools use: <a className="link" href={APP_URL}>{APP_URL.replace("https://", "")}</a></p>
         </>
       )}
     </main>
