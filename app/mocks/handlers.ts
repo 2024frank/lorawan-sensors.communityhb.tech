@@ -56,7 +56,7 @@ function readingsFor(eui: string): Reading[] {
 const ok = async () => { await delay(180); };
 
 export const handlers = [
-  http.post("*/api/auth/login", async ({ request }) => { await ok(); const body = await request.json() as { email?: string; password?: string }; if (!body.email || !body.password) return HttpResponse.json({ error: "Email and password are required" }, { status: 400 }); return HttpResponse.json({ token: "demo-token-fieldline", user: users[0] }); }),
+  http.post("*/api/auth/login", async ({ request }) => { await ok(); const body = await request.json() as { email?: string; password?: string }; if (!body.email || !body.password) return HttpResponse.json({ error: "Email and password are required" }, { status: 400 }); return HttpResponse.json({ token: "demo-token-lorawan", user: users[0] }); }),
   http.get("*/api/auth/me", async () => { await ok(); return HttpResponse.json({ ...users[0], orgId: "org-oberlin", orgName: "Oberlin Campus Network" }); }),
   http.post("*/api/auth/logout", () => HttpResponse.json({ ok: true })),
   http.get("*/api/users", async () => { await ok(); return HttpResponse.json({ items: users }); }),

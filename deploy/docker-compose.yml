@@ -1,4 +1,4 @@
-# Fieldline server stack: ChirpStack v4 + the Fieldline backend + datastore,
+# LoRaWAN server stack: ChirpStack v4 + the LoRaWAN backend + datastore,
 # behind Caddy with automatic HTTPS. Sanitized example — fill in the
 # environment values marked change-me.
 services:
@@ -25,12 +25,12 @@ services:
       - CHIRPSTACK_ADMIN_PASS=change-me
       - READINGS_URL=http://datastore:8000/readings
       - JWT_SECRET=change-me-long-random
-      - DATA_PATH=/data/fieldline.json
+      - DATA_PATH=/data/lorawan.json
       - PLATFORM_ADMINS=admin
       - PUBLIC_HOST=your.server.ip
       # optional onboarding emails (Resend, verified domain)
       - RESEND_API_KEY=
-      - MAIL_FROM=Fieldline <fieldline@yourdomain.com>
+      - MAIL_FROM=LoRaWAN <lorawan@yourdomain.com>
       - APP_URL=https://your-app-domain
       - ADMIN_URL=https://your-admin-domain
     volumes:

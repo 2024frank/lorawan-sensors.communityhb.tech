@@ -1,5 +1,5 @@
 #!/bin/bash
-# Onboard a new school onto Fieldline in one command.
+# Onboard a new school onto the LoRaWAN platform in one command.
 # Usage: ./onboard-school.sh "School Name" admin@school.edu ["Admin Name"]
 # Prints the login + temporary password to hand to the school.
 set -e

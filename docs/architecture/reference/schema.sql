@@ -1,4 +1,4 @@
--- Fieldline production schema.
+-- LoRaWAN platform production schema.
 -- Two stores, one Postgres cluster:
 --   * control plane  : orgs, users, devices, gateways, keys  (small, relational, strongly consistent)
 --   * telemetry plane: readings, events                      (the firehose — TimescaleDB hypertables)

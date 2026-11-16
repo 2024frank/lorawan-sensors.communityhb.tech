@@ -3,7 +3,7 @@
 // Gmail, Outlook, and Apple Mail. Logo is a hosted PNG (email clients don't
 // render SVG).
 const RESEND_API_KEY = process.env.RESEND_API_KEY ?? "";
-const MAIL_FROM = process.env.MAIL_FROM ?? "Fieldline <your-app-domain>";
+const MAIL_FROM = process.env.MAIL_FROM ?? "LoRaWAN <your-app-domain>";
 const APP_URL = process.env.APP_URL ?? "https://your-app-domain";
 const LOGO_URL = `${APP_URL}/logo-email.png`;
 
@@ -39,9 +39,9 @@ function shell(inner: string, recipientEmail: string): string {
 
     <!-- logo -->
     <tr><td align="center" style="padding:0 0 24px;">
-      <img src="${LOGO_URL}" width="56" height="56" alt="Fieldline" style="display:block;border:0;border-radius:14px;"/>
-      <div style="${F}font-size:17px;font-weight:700;color:#0d1c14;letter-spacing:-0.3px;margin-top:10px;">Fieldline&nbsp;<span style="color:#0f8a57;">One</span></div>
-      <div style="${F}font-size:10px;font-weight:600;color:#93a29a;letter-spacing:2.4px;margin-top:3px;">LORAWAN OPERATIONS</div>
+      <img src="${LOGO_URL}" width="56" height="56" alt="LoRaWAN" style="display:block;border:0;border-radius:14px;"/>
+      <div style="${F}font-size:17px;font-weight:700;color:#0d1c14;letter-spacing:-0.3px;margin-top:10px;">LoRaWAN&nbsp;<span style="color:#0f8a57;">Console</span></div>
+      <div style="${F}font-size:10px;font-weight:600;color:#93a29a;letter-spacing:2.4px;margin-top:3px;">COMMUNITY HUB</div>
     </td></tr>
 
     <!-- card -->
@@ -52,8 +52,8 @@ function shell(inner: string, recipientEmail: string): string {
     <!-- footer -->
     <tr><td align="center" style="padding:24px 20px 0;">
       <div style="${F}font-size:12px;line-height:19px;color:#93a29a;">
-        Fieldline &middot; Private LoRaWAN sensor networks for schools and campuses<br/>
-        You're receiving this because an administrator created a Fieldline account for ${esc(recipientEmail)}.
+        Community Hub &middot; Private LoRaWAN sensor networks for schools and campuses<br/>
+        You're receiving this because an administrator created a LoRaWAN console account for ${esc(recipientEmail)}.
       </div>
     </td></tr>
 
@@ -97,16 +97,16 @@ export function welcomeOrgEmail(p: { orgName: string; name: string; email: strin
   const subject = `Your ${p.orgName} workspace is ready`;
   const html = shell(`
     <h1 style="${F}margin:0 0 14px;font-size:22px;line-height:30px;font-weight:700;color:#0d1c14;letter-spacing:-0.3px;">
-      ${esc(p.orgName)} is ready on Fieldline</h1>
+      ${esc(p.orgName)} is ready on the LoRaWAN console</h1>
     <p style="${F}margin:0;font-size:15px;line-height:24px;color:#41504a;">
       Hi ${esc(p.name)},</p>
     <p style="${F}margin:14px 0 0;font-size:15px;line-height:24px;color:#41504a;">
       A private sensor-network workspace for <strong>${esc(p.orgName)}</strong> has been created, with you as its administrator.
       From one console you can connect gateways, add sensors with step-by-step setup guides, watch live readings, and route data to any system you use.</p>
     ${credentialRows(p.email, p.tempPassword)}
-    ${ctaButton("Sign in to Fieldline")}
+    ${ctaButton("Sign in to the LoRaWAN console")}
     ${securityNote}`, p.email);
-  const text = `${p.orgName} is ready on Fieldline
+  const text = `${p.orgName} is ready on the LoRaWAN console
 
 Hi ${esc(p.name)},
 
@@ -121,17 +121,17 @@ Security note: on your first sign-in you'll be asked to choose your own password
 }
 
 export function operatorEmail(p: { name: string; email: string; tempPassword?: string; adminUrl: string }) {
-  const subject = "You're now a Fieldline platform operator";
+  const subject = "You're now a LoRaWAN platform operator";
   const cred = p.tempPassword ? credentialRows(p.email, p.tempPassword) : `
     <p style="${F}margin:14px 0 24px;font-size:15px;line-height:24px;color:#41504a;">
-      Sign in with your existing Fieldline password.</p>`;
+      Sign in with your existing LoRaWAN console password.</p>`;
   const html = shell(`
     <h1 style="${F}margin:0 0 14px;font-size:22px;line-height:30px;font-weight:700;color:#0d1c14;letter-spacing:-0.3px;">
       Welcome to the operator team</h1>
     <p style="${F}margin:0;font-size:15px;line-height:24px;color:#41504a;">
       Hi ${esc(p.name)},</p>
     <p style="${F}margin:14px 0 0;font-size:15px;line-height:24px;color:#41504a;">
-      You've been made a <strong>platform operator</strong> on Fieldline. Operators onboard new organizations:
+      You've been made a <strong>platform operator</strong> on the LoRaWAN console. Operators onboard new organizations:
       you fill in a school's name and contact, and the platform builds their private workspace and sends them their login.</p>
     ${cred}
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:4px auto 0;">
@@ -144,30 +144,30 @@ export function operatorEmail(p: { name: string; email: string; tempPassword?: s
 
 Hi ${esc(p.name)},
 
-You've been made a platform operator on Fieldline. Operators onboard new organizations: you fill in a school's name and contact, and the platform builds their private workspace and sends them their login.
+You've been made a platform operator on the LoRaWAN console. Operators onboard new organizations: you fill in a school's name and contact, and the platform builds their private workspace and sends them their login.
 
 Operator console: ${p.adminUrl}
-${p.tempPassword ? `Email: ${p.email}\nTemporary password: ${p.tempPassword}\n\nOn your first sign-in you'll be asked to choose your own password.` : "Sign in with your existing Fieldline password."}`;
+${p.tempPassword ? `Email: ${p.email}\nTemporary password: ${p.tempPassword}\n\nOn your first sign-in you'll be asked to choose your own password.` : "Sign in with your existing LoRaWAN console password."}`;
   return { subject, html, text };
 }
 
 export function addedUserEmail(p: { orgName: string; name: string; email: string; tempPassword: string; role: string }) {
-  const subject = `You've been added to ${p.orgName} on Fieldline`;
+  const subject = `You've been added to ${p.orgName} on the LoRaWAN console`;
   const html = shell(`
     <h1 style="${F}margin:0 0 14px;font-size:22px;line-height:30px;font-weight:700;color:#0d1c14;letter-spacing:-0.3px;">
       Welcome to ${esc(p.orgName)}</h1>
     <p style="${F}margin:0;font-size:15px;line-height:24px;color:#41504a;">
       Hi ${esc(p.name)},</p>
     <p style="${F}margin:14px 0 0;font-size:15px;line-height:24px;color:#41504a;">
-      You've been given <strong>${esc(p.role)}</strong> access to ${p.orgName}'s sensor network on Fieldline — live readings, device status, and data tools in one console.</p>
+      You've been given <strong>${esc(p.role)}</strong> access to ${p.orgName}'s LoRaWAN sensor network — live readings, device status, and data tools in one console.</p>
     ${credentialRows(p.email, p.tempPassword)}
-    ${ctaButton("Sign in to Fieldline")}
+    ${ctaButton("Sign in to the LoRaWAN console")}
     ${securityNote}`, p.email);
   const text = `Welcome to ${p.orgName}
 
 Hi ${esc(p.name)},
 
-You've been given ${p.role} access to ${p.orgName}'s sensor network on Fieldline.
+You've been given ${p.role} access to ${p.orgName}'s LoRaWAN sensor network.
 
 Sign in:              ${APP_URL}
 Email:                ${p.email}

@@ -9,6 +9,26 @@ type Org = { id: string; name: string; createdAt: string; users: number };
 type Me = { email: string; name: string; platformAdmin?: boolean };
 type Operator = { id: string; name: string; email: string; builtIn?: boolean };
 
+// Where the operator's sign-in is kept in the browser. Before the product was
+// renamed these keys started with "fieldline_"; moveLegacyKeys() moves a saved
+// sign-in to the new keys once, so the rename doesn't sign anyone out.
+const TOKEN_KEY = "lorawan_operator_token";
+const ME_KEY = "lorawan_operator_me";
+const LEGACY_KEYS: [string, string][] = [["fieldline_operator_token", TOKEN_KEY], ["fieldline_operator_me", ME_KEY]];
+
+function moveLegacyKeys() {
+  try {
+    for (const [old, key] of LEGACY_KEYS) {
+      const value = localStorage.getItem(old);
+      if (value === null) continue;
+      if (localStorage.getItem(key) === null) localStorage.setItem(key, value);
+      localStorage.removeItem(old);
+    }
+  } catch {
+    // Storage is full or blocked: nothing to move.
+  }
+}
+
 function tempPassword() {
   const bytes = crypto.getRandomValues(new Uint8Array(3));
   return "Welcome-" + Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
@@ -36,7 +56,7 @@ function Header({ me, onLogout }: { me: Me | null; onLogout: () => void }) {
       <div className="flex items-center gap-3">
         <img src="/favicon.svg" alt="" className="h-10 w-10 rounded-xl"/>
         <div>
-          <div className="text-lg font-semibold tracking-tight">Fieldline <span className="text-emerald-400">Operator</span></div>
+          <div className="text-lg font-semibold tracking-tight">LoRaWAN <span className="text-emerald-400">Operator</span></div>
           <div className="text-[10px] uppercase tracking-[0.2em] text-emerald-100/40">Platform console</div>
         </div>
       </div>
@@ -120,18 +140,19 @@ export default function OperatorConsole() {
   }, []);
 
   useEffect(() => {
-    const t = localStorage.getItem("fieldline_operator_token");
-    const m = localStorage.getItem("fieldline_operator_me");
+    moveLegacyKeys();
+    const t = localStorage.getItem(TOKEN_KEY);
+    const m = localStorage.getItem(ME_KEY);
     if (t && m) { setToken(t); setMe(JSON.parse(m)); loadOrgs(t); }
     setReady(true);
   }, [loadOrgs]);
 
   function onToken(t: string, m: Me) {
-    localStorage.setItem("fieldline_operator_token", t);
-    localStorage.setItem("fieldline_operator_me", JSON.stringify(m));
+    localStorage.setItem(TOKEN_KEY, t);
+    localStorage.setItem(ME_KEY, JSON.stringify(m));
     setToken(t); setMe(m); loadOrgs(t);
   }
-  function logout() { localStorage.removeItem("fieldline_operator_token"); localStorage.removeItem("fieldline_operator_me"); setToken(null); setMe(null); }
+  function logout() { for (const key of [TOKEN_KEY, ME_KEY, ...LEGACY_KEYS.map(([old]) => old)]) localStorage.removeItem(key); setToken(null); setMe(null); }
 
   async function createOrg(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setErr("");

@@ -1,6 +1,6 @@
 # Connecting custom / DIY LoRaWAN devices
 
-Fieldline supports any LoRaWAN device, not just the built-in catalog. This is
+The LoRaWAN console supports any LoRaWAN device, not just the built-in catalog. This is
 how to bring your own hardware (EnviroDIY Mayfly dataloggers, Arduino builds,
 any vendor's sensor) onto the network.
 
@@ -12,14 +12,14 @@ Three values make a device joinable (OTAA):
 |---|---|---|
 | **DevEUI** | 64-bit unique device ID | Factory-set on most radio modules (readable over AT commands); or pick your own for DIY builds |
 | **JoinEUI** (AppEUI) | Application identifier | All zeros is fine for private networks; it just has to be set on the device |
-| **AppKey** | AES-128 secret | Fieldline generates it when you register the sensor; you write the same value into the device |
+| **AppKey** | AES-128 secret | The console generates it when you register the sensor; you write the same value into the device |
 
 Plus two radio settings:
 
-- **Region / channels**: US915, **sub-band 2 (channels 8–15)** for Fieldline's default gateway config.
+- **Region / channels**: US915, **sub-band 2 (channels 8–15)** for the console's default gateway config.
 - **Activation**: OTAA (over-the-air), LoRaWAN 1.0.x, Class A.
 
-## The flow in Fieldline
+## The flow in the console
 
 1. **Device types → Add type.** Name it, pick the LoRaWAN version your radio
    speaks, and paste a payload decoder (a `decodeUplink(input)` JavaScript
@@ -35,7 +35,7 @@ Plus two radio settings:
 **Seeed Wio-E5 / LoRa-E5** (UART AT commands):
 ```
 AT+ID                        # read factory DevEUI
-AT+KEY=APPKEY,"<32-hex-key>" # write the Fieldline-generated key
+AT+KEY=APPKEY,"<32-hex-key>" # write the console-generated key
 AT+DR=US915
 AT+CH=NUM,8-15               # sub-band 2
 AT+MODE=LWOTAA

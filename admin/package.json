@@ -1,5 +1,5 @@
 {
-  "name": "fieldline-operator",
+  "name": "lorawan-operator",
   "version": "0.1.0",
   "private": true,
   "scripts": {

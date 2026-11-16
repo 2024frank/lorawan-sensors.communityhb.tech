@@ -1,6 +1,6 @@
-# Fieldline — systems architecture
+# LoRaWAN — systems architecture
 
-How Fieldline scales from the single-node MVP in this repo to a production platform
+How the LoRaWAN platform scales from the single-node MVP in this repo to a production system
 running hundreds of schools. This is a design brief, not a description of the current
 running system: it names where things stand today and the target each grows into.
 
@@ -8,7 +8,7 @@ The reference implementations referenced below live in [`reference/`](reference/
 
 ## The shape of the problem
 
-Fieldline is a telemetry SaaS. Its load has a specific asymmetry that drives every
+The LoRaWAN platform is a telemetry SaaS. Its load has a specific asymmetry that drives every
 decision here:
 
 | | |
