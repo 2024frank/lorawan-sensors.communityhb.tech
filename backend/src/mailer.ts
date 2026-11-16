@@ -40,8 +40,8 @@ function shell(inner: string, recipientEmail: string): string {
     <!-- logo -->
     <tr><td align="center" style="padding:0 0 24px;">
       <img src="${LOGO_URL}" width="56" height="56" alt="LoRaWAN" style="display:block;border:0;border-radius:14px;"/>
-      <div style="${F}font-size:17px;font-weight:700;color:#0d1c14;letter-spacing:-0.3px;margin-top:10px;">LoRaWAN&nbsp;<span style="color:#0f8a57;">Console</span></div>
-      <div style="${F}font-size:10px;font-weight:600;color:#93a29a;letter-spacing:2.4px;margin-top:3px;">COMMUNITY HUB</div>
+      <div style="${F}font-size:17px;font-weight:700;color:#123a29;letter-spacing:-0.3px;margin-top:10px;">LoRaWAN</div>
+      <div style="${F}font-size:12px;font-weight:600;color:#467d58;margin-top:3px;">by Community Hub</div>
     </td></tr>
 
     <!-- card -->

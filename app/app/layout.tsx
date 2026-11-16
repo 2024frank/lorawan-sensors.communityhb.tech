@@ -24,12 +24,12 @@ export const metadata: Metadata = {
   openGraph: {
     title: "LoRaWAN Console — Community Hub",
     description: DESCRIPTION,
-    images: [{ url: "/og.png", width: 1731, height: 909, alt: "LoRaWAN campus sensor network" }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "The LoRaWAN mark: a radio tower in a green ring, on Community Hub pine" }],
   },
   twitter: { card: "summary_large_image", title: "LoRaWAN · Community Hub", description: DESCRIPTION, images: ["/og.png"] },
   icons: {
-    icon: "/favicon.svg?v=3",
-    shortcut: "/favicon.svg?v=3",
+    icon: "/favicon.svg?v=4",
+    shortcut: "/favicon.svg?v=4",
   },
 };
 

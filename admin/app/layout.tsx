@@ -9,7 +9,7 @@ const comfortaa = Comfortaa({ variable: "--font-comfortaa", subsets: ["latin"], 
 export const metadata: Metadata = {
   title: { default: "LoRaWAN Operator", template: "%s · LoRaWAN Operator" },
   description: "Operator console: onboard organizations and provision their people.",
-  icons: { icon: "/favicon.svg?v=2", shortcut: "/favicon.svg?v=2" },
+  icons: { icon: "/favicon.svg?v=3", shortcut: "/favicon.svg?v=3" },
   robots: { index: false, follow: false },
 };
 
