@@ -43,7 +43,34 @@ export type Integration = {
 };
 
 export type PushToken = { token: string; userId: string; orgId: string; platform?: string; createdAt: string };
-type Db = { users: AppUser[]; tokens: ApiToken[]; integrations: Integration[]; pushTokens?: PushToken[]; alertSeen?: Record<string, string[]> };
+export type DeviceConfig = {
+  devEui: string;
+  orgId: string;
+  reportingIntervalMinutes: number;
+  reportingIntervalStatus: "pending" | "applied";
+  reportingIntervalRequestedAt: string;
+  reportingIntervalConfirmedAt?: string;
+  reportingIntervalConfirmationSource?: "sensor_report" | "observed_cadence";
+};
+// Community Hub integration: a permanent, per-sensor token bound to the DevEUI.
+// The contract says it must NEVER be regenerated — a changed token makes Data Hub
+// create a second device and split that sensor's history.
+export type DeviceToken = {
+  devEui: string;
+  orgId: string;
+  token: string;      // exactly 30 chars, [0-9a-zA-Z], unique within the org
+  timeZone: string;   // IANA name (per sensor, not per org) — Data Hub needs it for local-day rollups
+  createdAt: string;
+};
+type Db = {
+  users: AppUser[];
+  tokens: ApiToken[];
+  integrations: Integration[];
+  pushTokens?: PushToken[];
+  alertSeen?: Record<string, string[]>;
+  deviceConfigs?: DeviceConfig[];
+  deviceTokens?: DeviceToken[];
+};
 
 let db: Db | null = null;
 
@@ -52,7 +79,7 @@ function load(): Db {
   try { db = JSON.parse(fs.readFileSync(DATA_PATH, "utf8")); }
   catch { db = { users: [], tokens: [], integrations: [] }; }
   db!.users ??= []; db!.tokens ??= []; db!.integrations ??= [];
-  db!.pushTokens ??= []; db!.alertSeen ??= {};
+  db!.pushTokens ??= []; db!.alertSeen ??= {}; db!.deviceConfigs ??= [];
   return db!;
 }
 export function save() {

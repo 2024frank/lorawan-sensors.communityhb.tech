@@ -7,6 +7,8 @@ Routes:
   GET /readings                 -> last 100 readings (newest first)
   GET /readings?latest=1        -> latest reading per device
   GET /readings?device=<devEui> -> latest for one device
+  GET /coverage?device=<devEui>&gateway=<gatewayId>&after=<cursor>
+                                -> gateway-specific radio receptions
   GET /health
 """
 import os, json, sqlite3, threading, time
@@ -39,6 +41,34 @@ def init_db():
     for stmt in ("ALTER TABLE readings ADD COLUMN gw TEXT",):
         try: c.execute(stmt)
         except sqlite3.OperationalError: pass
+    # One LoRaWAN uplink can be received by more than one gateway. The legacy
+    # readings row intentionally remains one-per-uplink for dashboard/history
+    # compatibility; this table preserves every gateway-specific rxInfo entry
+    # for coverage surveys. `id` is the stable, monotonically increasing cursor
+    # used by the mobile app's low-latency polling loop.
+    c.execute("""CREATE TABLE IF NOT EXISTS receptions(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        reading_id INTEGER,
+        dev_eui TEXT NOT NULL,
+        ts TEXT,
+        f_cnt INTEGER,
+        gateway_id TEXT NOT NULL,
+        rssi INTEGER,
+        snr REAL,
+        frequency INTEGER,
+        bandwidth INTEGER,
+        spreading_factor INTEGER,
+        code_rate TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_reception_device_gateway ON receptions(dev_eui, gateway_id, id)")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_reception_reading_gateway ON receptions(reading_id, gateway_id)")
+    # Preserve the single gateway already present on historical reading rows.
+    # Radio modulation details were not stored previously, so those fields are
+    # necessarily null. INSERT OR IGNORE makes this migration restart-safe.
+    if c.execute("SELECT 1 FROM receptions LIMIT 1").fetchone() is None:
+        c.execute("""INSERT OR IGNORE INTO receptions(
+            reading_id,dev_eui,ts,f_cnt,gateway_id,rssi,snr)
+            SELECT id,LOWER(dev_eui),ts,f_cnt,LOWER(gw),rssi,snr
+            FROM readings WHERE gw IS NOT NULL AND gw <> ''""")
     c.execute("""CREATE TABLE IF NOT EXISTS events(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         dev_eui TEXT, kind TEXT, ts TEXT, code TEXT, detail TEXT)""")
@@ -71,6 +101,40 @@ def rowdict(r):
             "rssi": r[3], "snr": r[4], "data": json.loads(r[5] or "{}"),
             "gw": r[6] if len(r) > 6 else None}
 
+def receptiondict(r):
+    return {
+        # Cursors are strings so JavaScript and Swift clients never lose a
+        # 64-bit SQLite row id through JSON number precision conversion.
+        "cursor": str(r[0]),
+        "timestamp": r[1],
+        "devEui": r[2],
+        "gatewayId": r[3],
+        "rssi": r[4],
+        "snr": r[5],
+        "fCnt": r[6],
+        "frequency": r[7],
+        "bandwidth": r[8],
+        "spreadingFactor": r[9],
+        "codeRate": r[10],
+    }
+
+def radio_params(event):
+    """Return the uplink-wide modulation fields from a ChirpStack v4 event.
+
+    ChirpStack emits these under txInfo.modulation.lora. The fallbacks keep
+    existing/older event fixtures usable without weakening the stored schema.
+    """
+    tx = event.get("txInfo") or {}
+    modulation = tx.get("modulation") or {}
+    lora = (modulation.get("lora") or modulation.get("loRa") or
+            tx.get("loRaModulationInfo") or {})
+    return {
+        "frequency": tx.get("frequency"),
+        "bandwidth": lora.get("bandwidth"),
+        "spreadingFactor": lora.get("spreadingFactor"),
+        "codeRate": lora.get("codeRate"),
+    }
+
 # ---- MQTT consumer ----
 def on_connect(client, userdata, flags, rc):
     for kind in ("up", "join", "status", "log"):
@@ -85,7 +149,9 @@ def on_message(client, userdata, msg):
         eui = di.get("devEui")
         c = db()
         if kind == "up":
-            rx = (e.get("rxInfo") or [{}])[0]
+            eui = (eui or "").lower()
+            rx_infos = e.get("rxInfo") or []
+            rx = rx_infos[0] if rx_infos else {}
             data_str = json.dumps(e.get("object") or {})
             gw = (rx.get("gatewayId") or "").lower() or None
             cur = c.execute("INSERT INTO readings(dev_eui,device,ts,f_cnt,rssi,snr,data,gw) VALUES(?,?,?,?,?,?,?,?)",
@@ -100,6 +166,20 @@ def on_message(client, userdata, msg):
                       rssi=excluded.rssi, snr=excluded.snr, data=excluded.data, gw=excluded.gw, src_id=excluded.src_id""", vals)
             else:
                 c.execute("INSERT OR IGNORE INTO latest(dev_eui,device,ts,rssi,snr,data,gw,src_id) VALUES(?,?,?,?,?,?,?,?)", vals)
+            radio = radio_params(e)
+            for reception in rx_infos:
+                gateway_id = (reception.get("gatewayId") or "").lower()
+                if not gateway_id:
+                    continue
+                c.execute("""INSERT OR IGNORE INTO receptions(
+                    reading_id,dev_eui,ts,f_cnt,gateway_id,rssi,snr,
+                    frequency,bandwidth,spreading_factor,code_rate)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                    (cur.lastrowid, eui,
+                     e.get("time") or reception.get("nsTime") or reception.get("gwTime"),
+                     e.get("fCnt"), gateway_id,
+                     reception.get("rssi"), reception.get("snr"), radio["frequency"],
+                     radio["bandwidth"], radio["spreadingFactor"], radio["codeRate"]))
         elif kind == "join":
             c.execute("INSERT INTO events(dev_eui,kind,ts,code,detail) VALUES(?,?,?,?,?)",
                       (eui, "join", e.get("time"), "JOIN", json.dumps({"devAddr": e.get("devAddr")})))
@@ -138,6 +218,24 @@ app = Flask(__name__)
 def cors(r):
     r.headers["Access-Control-Allow-Origin"] = "*"
     return r
+
+@app.delete("/readings")
+def purge_device():
+    # Called when a sensor is deleted so its history does not linger and get
+    # inherited by a future device that reuses the same DevEUI.
+    dev = (request.args.get("device") or "").lower()
+    if not dev:
+        return jsonify({"error": "device required"}), 400
+    c = db()
+    try:
+        n = c.execute("DELETE FROM readings WHERE dev_eui=?", (dev,)).rowcount
+        c.execute("DELETE FROM receptions WHERE dev_eui=?", (dev,))
+        c.execute("DELETE FROM events WHERE dev_eui=?", (dev,))
+        c.execute("DELETE FROM latest WHERE dev_eui=?", (dev,))
+        c.commit()
+        return jsonify({"ok": True, "device": dev, "readingsDeleted": n})
+    finally:
+        c.close()
 
 @app.get("/readings")
 def readings():
@@ -189,6 +287,63 @@ def readings():
         return jsonify([rowdict(x) for x in rows])
     finally:
         c.close()
+
+@app.get("/coverage")
+def coverage():
+    """Cursor-based gateway reception feed used by a live coverage survey.
+
+    The datastore is an internal service; the public backend validates the
+    caller's organization, device, and gateway before proxying this endpoint.
+    Results are oldest-first so advancing `after=nextCursor` cannot skip rows.
+    """
+    dev = (request.args.get("device") or "").strip().lower()
+    gateway = (request.args.get("gateway") or "").strip().lower()
+    if not dev or not gateway:
+        return jsonify({"error": "device and gateway required"}), 400
+
+    raw_after = (request.args.get("after") or "0").strip()
+    if not raw_after.isdigit():
+        return jsonify({"error": "after must be a non-negative integer cursor"}), 400
+    after = int(raw_after)
+    since = (request.args.get("from") or "").strip()
+    try:
+        limit = min(max(int(request.args.get("limit") or 100), 1), 500)
+    except ValueError:
+        return jsonify({"error": "limit must be an integer"}), 400
+
+    where = ["dev_eui=?", "gateway_id=?"]
+    params = [dev, gateway]
+    if request.args.get("latest"):
+        c = db()
+        try:
+            row = c.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM receptions WHERE dev_eui=? AND gateway_id=?",
+                (dev, gateway),
+            ).fetchone()
+            cursor = str(row[0] if row else 0)
+            return jsonify({"items": [], "nextCursor": cursor, "hasMore": False})
+        finally:
+            c.close()
+
+    where.append("id>?")
+    params.append(after)
+    if since:
+        where.append("ts>=?")
+        params.append(since)
+
+    sql = """SELECT id,ts,dev_eui,gateway_id,rssi,snr,f_cnt,frequency,
+                    bandwidth,spreading_factor,code_rate
+             FROM receptions WHERE %s ORDER BY id ASC LIMIT ?""" % " AND ".join(where)
+    c = db()
+    try:
+        rows = c.execute(sql, (*params, limit + 1)).fetchall()
+    finally:
+        c.close()
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    items = [receptiondict(row) for row in page]
+    next_cursor = items[-1]["cursor"] if items else str(after)
+    return jsonify({"items": items, "nextCursor": next_cursor, "hasMore": has_more})
 
 @app.get("/events")
 def events():

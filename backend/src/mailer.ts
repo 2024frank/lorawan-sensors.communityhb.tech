@@ -1,9 +1,9 @@
-// Onboarding email via Resend (yourdomain.com is a verified sending domain).
+// Onboarding email via Resend (the MAIL_FROM domain must be verified in Resend).
 // Templates are table-based with inline styles so they render correctly in
 // Gmail, Outlook, and Apple Mail. Logo is a hosted PNG (email clients don't
 // render SVG).
 const RESEND_API_KEY = process.env.RESEND_API_KEY ?? "";
-const MAIL_FROM = process.env.MAIL_FROM ?? "LoRaWAN <your-app-domain>";
+const MAIL_FROM = process.env.MAIL_FROM ?? "LoRaWAN <lorawan@yourdomain.com>";
 const APP_URL = process.env.APP_URL ?? "https://your-app-domain";
 const LOGO_URL = `${APP_URL}/logo-email.png`;
 

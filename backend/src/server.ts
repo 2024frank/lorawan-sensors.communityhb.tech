@@ -11,12 +11,14 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import jwt from "jsonwebtoken";
 import { cs, verifyCredentials } from "./chirpstack.js";
-import { store, save, userByEmail, hashPassword, verifyPassword, sha256, randomId, randomHex, type AppUser } from "./store.js";
+import { store, save, userByEmail, hashPassword, verifyPassword, sha256, randomId, randomHex, type AppUser, type DeviceConfig, type DeviceToken } from "./store.js";
 import { sendMail, welcomeOrgEmail, addedUserEmail, operatorEmail } from "./mailer.js";
+import { cadenceConfirmation, intervalMinutes, sensorHealth } from "./device-health.js";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const SECRET = process.env.JWT_SECRET ?? "dev-secret";
 const READINGS_URL = process.env.READINGS_URL ?? "http://datastore:8000/readings";
+const COVERAGE_URL = READINGS_URL.replace(/\/readings$/, "/coverage");
 const PUBLIC_HOST = process.env.PUBLIC_HOST ?? "your.server.ip";
 const PLATFORM_ADMINS = (process.env.PLATFORM_ADMINS ?? "admin").split(",").map(s => s.trim().toLowerCase());
 
@@ -26,7 +28,7 @@ const app = new Hono();
 // The two *.vercel.app hosts are the live deployments' original addresses from
 // before the product was renamed; they stay allowed until those projects move.
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS ??
-  "https://your-app-domain,https://your-admin-domain,https://lorawan-sensors.communityhb.tech,https://fieldline-tau.vercel.app,https://fieldline-admin.vercel.app,http://localhost:3000,http://localhost:3100").split(",");
+  "https://lorawan-sensors.communityhb.tech,https://admin.lorawan-sensors.communityhb.tech,https://fieldline-tau.vercel.app,https://fieldline-admin.vercel.app,http://localhost:3000,http://localhost:3100").split(",");
 app.use("*", cors({ origin: (o) => (o && ALLOWED_ORIGINS.includes(o) ? o : ""), credentials: false }));
 
 // ── brute-force throttle (per-node; Redis-backed at multi-node, see ARCHITECTURE) ──
@@ -207,7 +209,7 @@ app.use("/*", async (c, next) => {
   const p = c.req.path;
   // Only login, health, and the token-authed public API are open. Everything
   // else — including CSV export — requires a valid session.
-  if (p === "/auth/login" || p === "/health" || p.startsWith("/public")) return next();
+  if (p === "/auth/login" || p === "/health" || p.startsWith("/public") || p.startsWith("/integrations/community-hub")) return next();
   const u = authUser(c);
   if (!u) return c.json({ error: "unauthorized" }, 401);
   // Forced password change is enforced HERE, not just in the UI: a temporary
@@ -222,7 +224,7 @@ app.use("/*", async (c, next) => {
 });
 
 // ---------- helpers ----------
-async function latestByEui(euis: Set<string>): Promise<Record<string, { measurements: Record<string, number>; time: string; rssi?: number; snr?: number; gw?: string | null }>> {
+async function latestByEui(euis: Set<string>): Promise<Record<string, { measurements: Record<string, unknown>; time: string; rssi?: number; snr?: number; gw?: string | null }>> {
   try {
     const r = await fetch(`${READINGS_URL}?latest=1`); const arr = (await r.json()) as any[];
     const out: Record<string, any> = {};
@@ -238,9 +240,63 @@ async function deviceStates(eui?: string): Promise<Record<string, DevState>> {
   const url = eui ? `${STATE_URL}?device=${eui}` : STATE_URL;
   try { const r = await fetch(url); return await r.json() as Record<string, DevState>; } catch { return {}; }
 }
-function statusFrom(lastSeenAt: string | null): "online" | "offline" | "never" {
+function reportedInterval(data: unknown): number | null {
+  if (!data || typeof data !== "object") return null;
+  const record = data as Record<string, unknown>;
+  const direct = record.report_interval;
+  if (typeof direct === "number") return direct;
+  const gs = record.reporting_interval;
+  if (gs && typeof gs === "object") {
+    const minutes = (gs as Record<string, unknown>).minutes_of_time;
+    if (typeof minutes === "number") return minutes;
+    const seconds = (gs as Record<string, unknown>).seconds_of_time;
+    if (typeof seconds === "number") return Math.round(seconds / 60);
+  }
+  const flattenedMinutes = record["reporting_interval.minutes_of_time"];
+  if (typeof flattenedMinutes === "number") return flattenedMinutes;
+  return null;
+}
+async function intervalEvidence(eui: string, config?: DeviceConfig): Promise<{
+  reported: { minutes: number; time: string } | null;
+  cadence: { confirmedAt: string; matchingIntervals: number } | null;
+}> {
+  try {
+    const response = await fetch(`${READINGS_URL}?device=${eui}&history=1&limit=200`);
+    const rows = await response.json() as Array<{ time?: string; data?: unknown }>;
+    const reported = rows
+      .map(row => ({ minutes: reportedInterval(row.data), time: row.time ?? "" }))
+      .filter((row): row is { minutes: number; time: string } => row.minutes != null)
+      .sort((a, b) => b.time.localeCompare(a.time))[0] ?? null;
+    const cadence = config?.reportingIntervalStatus === "pending"
+      ? cadenceConfirmation(rows, config.reportingIntervalRequestedAt, config.reportingIntervalMinutes)
+      : null;
+    return { reported, cadence };
+  } catch {
+    return { reported: null, cadence: null };
+  }
+}
+function savedDeviceConfig(orgId: string, eui: string): DeviceConfig | undefined {
+  return store.get().deviceConfigs?.find(config => config.orgId === orgId && config.devEui === eui);
+}
+function gatewayStatusFrom(lastSeenAt: string | null): "online" | "offline" | "never" {
   if (!lastSeenAt) return "never";
   return Date.now() - new Date(lastSeenAt).getTime() < 60 * 60 * 1000 ? "online" : "offline";
+}
+type ProfileInfo = { name: string; uplinkInterval: number };
+const profileCache = new Map<string, { profile: ProfileInfo; at: number }>();
+async function profileInfo(id: string): Promise<ProfileInfo> {
+  const cached = profileCache.get(id);
+  if (cached && Date.now() - cached.at < 60_000) return cached.profile;
+  const full = (await cs<any>("GET", `/api/device-profiles/${id}`)).deviceProfile;
+  const profile = { name: String(full.name ?? ""), uplinkInterval: Number(full.uplinkInterval ?? 3600) };
+  profileCache.set(id, { profile, at: Date.now() });
+  return profile;
+}
+function expectedInterval(config: DeviceConfig | undefined, profile: ProfileInfo): number {
+  // The saved target interval is the single source of truth for health. Once
+  // an operator sets it, every status check expects an uplink within that time.
+  if (config) return intervalMinutes(config.reportingIntervalMinutes);
+  return intervalMinutes(profile.uplinkInterval / 60);
 }
 function battery(d: any): number | null {
   const b = d?.deviceStatus?.batteryLevel;
@@ -256,6 +312,63 @@ async function ownedDevice(eui: string, org: Org): Promise<any | null> {
     const d = await cs<any>("GET", `/api/devices/${eui}`);
     return d.device.applicationId === org.appId ? d : null;
   } catch { return null; }
+}
+
+type CoverageSession = {
+  type: "coverage-session";
+  sid: string;
+  orgId: string;
+  createdBy: string;
+  devEui: string;
+  gatewayId: string;
+  gatewayName?: string;
+  gatewayLocation: { latitude: number; longitude: number } | null;
+  startedAt: string;
+  expectedIntervalSeconds: number;
+  lostAfterSeconds: number;
+  initialCursor: string;
+};
+type CoverageFeed = { items?: any[]; nextCursor?: string | number; hasMore?: boolean };
+// Kept from before the rename: changing it would invalidate every coverage
+// session token already handed out.
+const COVERAGE_AUDIENCE = "fieldline-coverage";
+
+function normalizedCursor(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  if (!/^\d+$/.test(raw)) return null;
+  return raw.replace(/^0+(?=\d)/, "");
+}
+function maxCursor(a: string, b: string): string {
+  const aa = normalizedCursor(a) ?? "0";
+  const bb = normalizedCursor(b) ?? "0";
+  if (aa.length !== bb.length) return aa.length > bb.length ? aa : bb;
+  return aa >= bb ? aa : bb;
+}
+function decodeCoverageSession(id: string): CoverageSession | null {
+  try {
+    const p = jwt.verify(id, SECRET, { audience: COVERAGE_AUDIENCE }) as Partial<CoverageSession>;
+    if (p.type !== "coverage-session" || !p.sid || !p.orgId || !p.devEui || !p.gatewayId ||
+        !p.startedAt || !p.initialCursor || !p.expectedIntervalSeconds || !p.lostAfterSeconds) return null;
+    return p as CoverageSession;
+  } catch { return null; }
+}
+function publicCoverageSession(id: string, s: CoverageSession) {
+  return {
+    id,
+    devEui: s.devEui,
+    gatewayId: s.gatewayId,
+    gatewayName: s.gatewayName,
+    gatewayLocation: s.gatewayLocation,
+    startedAt: s.startedAt,
+    expectedIntervalSeconds: s.expectedIntervalSeconds,
+    lostAfterSeconds: s.lostAfterSeconds,
+    initialCursor: s.initialCursor,
+  };
+}
+async function coverageFeed(params: URLSearchParams): Promise<CoverageFeed> {
+  const response = await fetch(`${COVERAGE_URL}?${params}`);
+  if (!response.ok) throw new Error(`coverage datastore returned ${response.status}`);
+  return await response.json() as CoverageFeed;
 }
 
 // ---------- orgs (platform operator only) ----------
@@ -309,10 +422,7 @@ app.post("/orgs", async (c) => {
 });
 
 // ---------- platform operators (who can onboard schools) ----------
-// The operator console's live address still has the product's old name in it.
-// It stays the default so the link in operator emails keeps working; set
-// ADMIN_URL to point the emails somewhere else.
-const ADMIN_URL = process.env.ADMIN_URL ?? "https://fieldline-admin.vercel.app";
+const ADMIN_URL = process.env.ADMIN_URL ?? "https://admin.lorawan-sensors.communityhb.tech";
 app.get("/operators", (c) => {
   const me = authUser(c)!; if (!isPlatformAdmin(me)) return c.json({ error: "platform admins only" }, 403);
   const items = store.get().users.filter(isPlatformAdmin).map(u => ({ ...pub(u), builtIn: PLATFORM_ADMINS.includes(u.email) }));
@@ -409,7 +519,7 @@ app.delete("/users/:id", async (c) => {
 // ---------- gateways (org-scoped) ----------
 function mapGateway(g: any) {
   return {
-    eui: g.gatewayId, name: g.name, status: statusFrom(g.lastSeenAt ?? null), lastSeenAt: g.lastSeenAt ?? null,
+    eui: g.gatewayId, name: g.name, status: gatewayStatusFrom(g.lastSeenAt ?? null), lastSeenAt: g.lastSeenAt ?? null,
     location: g.location ? { lat: g.location.latitude, lng: g.location.longitude } : null,
   };
 }
@@ -475,9 +585,12 @@ app.delete("/gateways/:eui", async (c) => {
 const typeCache = new Map<string, { items: unknown[]; at: number }>();
 const TYPE_TTL = 60_000;
 // Default description for a custom type. Types made before the product was renamed
-// were saved with the old name in it, so that wording is swapped when read back.
+// were saved with older wording, so that wording is swapped when read back.
 const TYPE_DESCRIPTION = "Custom device type created in the LoRaWAN console";
-const LEGACY_TYPE_DESCRIPTION = "Custom device type created via Fieldline";
+const LEGACY_TYPE_DESCRIPTIONS = new Set([
+  "Custom device type created via Fieldline",
+  "Custom device type created via Lorawan",
+]);
 app.get("/device-types", async (c) => {
   const org = await orgOf(authUser(c)!);
   const hit = typeCache.get(org.tenantId);
@@ -486,7 +599,7 @@ app.get("/device-types", async (c) => {
   const items = await Promise.all((r.result ?? []).map(async (p: any) => {
     const full = (await cs<any>("GET", `/api/device-profiles/${p.id}`)).deviceProfile;
     const meas = Object.values(full.measurements ?? {}).map((m: any) => ({ name: m.name, unit: "" }));
-    return { id: p.id, name: p.name, region: full.region, lorawanVersion: full.macVersion, class: full.supportsClassC ? "C" : "A", measurements: meas, hasDecoder: Boolean(full.payloadCodecScript), description: full.description === LEGACY_TYPE_DESCRIPTION ? TYPE_DESCRIPTION : full.description ?? "" };
+    return { id: p.id, name: p.name, region: full.region, lorawanVersion: full.macVersion, class: full.supportsClassC ? "C" : "A", measurements: meas, hasDecoder: Boolean(full.payloadCodecScript), description: LEGACY_TYPE_DESCRIPTIONS.has(full.description) ? TYPE_DESCRIPTION : full.description ?? "" };
   }));
   typeCache.set(org.tenantId, { items, at: Date.now() });
   return c.json({ items });
@@ -533,15 +646,27 @@ app.post("/device-types", async (c) => {
 app.get("/devices", async (c) => {
   const org = await orgOf(authUser(c)!);
   const euis = await orgEuis(org.appId);
-  const [latest, states] = await Promise.all([latestByEui(euis), deviceStates()]);
   const devs = (await cs<any>("GET", `/api/devices?limit=100&applicationId=${org.appId}`)).result ?? [];
-  const items = devs.map((d: any) => ({
-    eui: d.devEui, name: d.name, typeId: d.deviceProfileId, typeName: d.deviceProfileName,
-    status: statusFrom(d.lastSeenAt ?? null), lastSeenAt: d.lastSeenAt ?? null,
-    battery: battery(d) ?? states[d.devEui]?.battery ?? null,
-    latest: latest[d.devEui] ?? null,
-    gatewayEui: latest[d.devEui]?.gw ?? null,
-  }));
+  const uniqueProfileIds = [...new Set<string>(devs.map((d: any) => d.deviceProfileId))];
+  const [latest, states, profileEntries] = await Promise.all([
+    latestByEui(euis),
+    deviceStates(),
+    Promise.all(uniqueProfileIds.map(async id => [id, await profileInfo(id)] as const)),
+  ]);
+  const profiles = new Map(profileEntries);
+  const items = devs.map((d: any) => {
+    const profile = profiles.get(d.deviceProfileId) ?? { name: d.deviceProfileName ?? "", uplinkInterval: 3600 };
+    const config = savedDeviceConfig(org.tenantId, d.devEui);
+    const health = sensorHealth(d.lastSeenAt ?? null, expectedInterval(config, profile), !d.isDisabled);
+    return {
+      eui: d.devEui, name: d.name, typeId: d.deviceProfileId, typeName: d.deviceProfileName,
+      status: health.status, lastSeenAt: d.lastSeenAt ?? null, health,
+      battery: battery(d) ?? states[d.devEui]?.battery ?? null,
+      latest: latest[d.devEui] ?? null,
+      gatewayEui: latest[d.devEui]?.gw ?? null,
+      enabled: !d.isDisabled,
+    };
+  });
   return c.json({ items });
 });
 app.get("/devices/:eui", async (c) => {
@@ -549,25 +674,70 @@ app.get("/devices/:eui", async (c) => {
   const eui = c.req.param("eui").toLowerCase();
   const d = await ownedDevice(eui, org);
   if (!d) return c.json({ error: "not found" }, 404);
-  const [latestMap, states] = await Promise.all([latestByEui(new Set([eui])), deviceStates(eui)]);
+  const savedConfig = savedDeviceConfig(org.tenantId, eui);
+  const [latestMap, states, profile, evidence] = await Promise.all([
+    latestByEui(new Set([eui])),
+    deviceStates(eui),
+    profileInfo(d.device.deviceProfileId),
+    intervalEvidence(eui, savedConfig),
+  ]);
   const latest = latestMap[eui] ?? null;
   const st = states[eui] ?? {};
-  let typeName = "";
-  try { typeName = (await cs<any>("GET", `/api/device-profiles/${d.device.deviceProfileId}`)).deviceProfile.name; } catch { /* optional */ }
+  const typeName = profile.name;
+  const intervalReport = evidence.reported;
+  if (
+    savedConfig &&
+    savedConfig.reportingIntervalStatus === "pending" &&
+    ((intervalReport?.minutes === savedConfig.reportingIntervalMinutes &&
+      intervalReport.time >= savedConfig.reportingIntervalRequestedAt) || evidence.cadence)
+  ) {
+    savedConfig.reportingIntervalStatus = "applied";
+    savedConfig.reportingIntervalConfirmedAt = intervalReport?.minutes === savedConfig.reportingIntervalMinutes
+      ? intervalReport.time
+      : evidence.cadence!.confirmedAt;
+    savedConfig.reportingIntervalConfirmationSource = intervalReport?.minutes === savedConfig.reportingIntervalMinutes
+      ? "sensor_report"
+      : "observed_cadence";
+    save();
+  }
+  const health = sensorHealth(
+    d.lastSeenAt ?? null,
+    expectedInterval(savedConfig, profile),
+    !d.device.isDisabled,
+  );
   return c.json({
     eui, name: d.device.name, typeId: d.device.deviceProfileId, typeName,
-    status: statusFrom(d.lastSeenAt ?? null), lastSeenAt: d.lastSeenAt ?? null,
+    status: health.status, lastSeenAt: d.lastSeenAt ?? null, health,
     battery: battery(d) ?? st.battery ?? null, latest, enabled: !d.device.isDisabled,
     rssi: latest?.rssi ?? null, snr: latest?.snr ?? null,
     gatewayEui: latest?.gw ?? null,
     margin: st.margin ?? null,
     lastJoinAt: st.lastJoinAt ?? null,
     lastError: st.lastError ?? null,
+    config: savedConfig ? {
+      reportingIntervalMinutes: savedConfig.reportingIntervalMinutes,
+      reportingIntervalStatus: savedConfig.reportingIntervalStatus,
+      reportingIntervalRequestedAt: savedConfig.reportingIntervalRequestedAt,
+      reportingIntervalConfirmedAt: savedConfig.reportingIntervalConfirmedAt ?? null,
+      reportingIntervalConfirmationSource: savedConfig.reportingIntervalConfirmationSource ?? null,
+      reportingIntervalReportedMinutes: intervalReport?.minutes ?? null,
+    } : intervalReport ? {
+      reportingIntervalMinutes: intervalReport.minutes,
+      reportingIntervalStatus: "applied",
+      reportingIntervalConfirmedAt: intervalReport.time,
+      reportingIntervalReportedMinutes: intervalReport.minutes,
+    } : {},
   });
 });
 app.post("/devices", async (c) => {
   try {
     const org = await orgOf(authUser(c)!);
+    // A sensor has nothing to reach the network through until a gateway exists.
+    // Enforce gateway-first so onboarding can't produce orphaned sensors.
+    const gws = await cs<any>("GET", `/api/gateways?limit=1&tenantId=${org.tenantId}`);
+    if (!Number(gws?.totalCount) && !(gws?.result?.length)) {
+      return c.json({ error: "Add a gateway before your first sensor. Sensors have nothing to connect through until a gateway is registered." }, 400);
+    }
     const { name, eui, typeId, appKey: providedKey } = await c.req.json();
     const devEui = String(eui).toLowerCase();
     // caller may supply the key the sensor ALREADY knows (factory/vendor key):
@@ -600,12 +770,47 @@ app.patch("/devices/:eui", async (c) => {
   await cs("PUT", `/api/devices/${eui}`, { device: d });
   return c.json({ eui, name: d.name, enabled: !d.isDisabled, typeId: d.deviceProfileId, typeName: "", status: "offline", lastSeenAt: null, battery: null, latest: null });
 });
+// Replace the key a registered device joins with. The add-sensor flow tries the
+// manufacturer's factory key first; when the join fails with a MIC error that key
+// was wrong, and the installer needs a fresh one to write in WITHOUT losing the
+// half-finished registration (re-creating the device would 409 on the EUI).
+app.post("/devices/:eui/rekey", async (c) => {
+  try {
+    const org = await orgOf(authUser(c)!);
+    const eui = c.req.param("eui").toLowerCase();
+    if (!(await ownedDevice(eui, org))) return c.json({ error: "not found" }, 404);
+    const { appKey: providedKey } = await c.req.json().catch(() => ({}));
+    let appKey: string;
+    let keySource: "provided" | "generated";
+    if (providedKey) {
+      const norm = String(providedKey).replace(/[^0-9a-fA-F]/g, "").toLowerCase();
+      if (norm.length !== 32) return c.json({ error: "An application key is 32 hex characters" }, 400);
+      appKey = norm; keySource = "provided";
+    } else {
+      appKey = randomHex(16); keySource = "generated";
+    }
+    // PUT (not POST) — the key row already exists from device creation.
+    // LoRaWAN 1.0.x still wants the AppKey in nwkKey, same quirk as create.
+    await cs("PUT", `/api/devices/${eui}/keys`, { deviceKeys: { devEui: eui, nwkKey: appKey, appKey: "" } });
+    return c.json({ appKey, keySource });
+  } catch (e) { return err400(c, e, "Could not set a new key on this sensor."); }
+});
 app.delete("/devices/:eui", async (c) => {
   const org = await orgOf(authUser(c)!);
   const eui = c.req.param("eui").toLowerCase();
   if (!(await ownedDevice(eui, org))) return c.json({ error: "not found" }, 404);
   await cs("DELETE", `/api/devices/${eui}`);
   euiCache.delete(org.appId);
+  const db = store.get();
+  db.deviceConfigs = (db.deviceConfigs ?? []).filter(config => !(config.orgId === org.tenantId && config.devEui === eui));
+  save();
+  // Purge stored history too, so a future device reusing this DevEUI does not
+  // inherit it. Best-effort: the device is already gone from the network.
+  try {
+    await fetch(`${READINGS_URL}?device=${eui}`, { method: "DELETE" });
+  } catch (e) {
+    console.error(`readings purge failed for ${eui}:`, e);
+  }
   return c.json({ ok: true });
 });
 
@@ -641,6 +846,142 @@ app.get("/devices/:eui/readings.csv", async (c) => {
   return c.body(await r.text());
 });
 
+// ---------- mobile coverage surveys (org + device + gateway scoped) ----------
+// Sessions are signed, restart-safe capabilities. The normal bearer token is
+// still required on every request; the session token only fixes the selected
+// organization/device/gateway and prevents a client from changing that scope.
+app.post("/coverage-sessions", async (c) => {
+  const me = authUser(c)!;
+  const org = await orgOf(me);
+  let body: any;
+  try { body = await c.req.json(); }
+  catch { return c.json({ error: "Send devEui and gatewayId as JSON" }, 400); }
+
+  const devEui = String(body.devEui ?? "").trim().toLowerCase();
+  const gatewayId = String(body.gatewayId ?? "").trim().toLowerCase();
+  if (!/^[0-9a-f]{16}$/.test(devEui)) return c.json({ error: "devEui must be 16 hexadecimal characters" }, 400);
+  if (!/^[0-9a-f]{16}$/.test(gatewayId)) return c.json({ error: "gatewayId must be 16 hexadecimal characters" }, 400);
+
+  const expectedIntervalSeconds = body.expectedIntervalSeconds == null ? 60 : Number(body.expectedIntervalSeconds);
+  if (!Number.isInteger(expectedIntervalSeconds) || expectedIntervalSeconds < 10 || expectedIntervalSeconds > 86_400) {
+    return c.json({ error: "expectedIntervalSeconds must be an integer between 10 and 86400" }, 400);
+  }
+
+  const device = await ownedDevice(devEui, org);
+  if (!device) return c.json({ error: "sensor not found" }, 404);
+  const gateway = await cs<any>("GET", `/api/gateways/${gatewayId}`).catch(() => null);
+  if (!gateway || gateway.gateway?.tenantId !== org.tenantId) return c.json({ error: "gateway not found" }, 404);
+
+  // Snapshot the latest cursor before the run begins. This prevents the first
+  // poll from returning old history even if clocks differ between services.
+  let initialCursor = "0";
+  try {
+    const params = new URLSearchParams({ device: devEui, gateway: gatewayId, latest: "1" });
+    const baseline = await coverageFeed(params);
+    initialCursor = normalizedCursor(baseline.nextCursor) ?? "0";
+  } catch (e) {
+    console.error("coverage session baseline failed:", e);
+    return c.json({ error: "Coverage telemetry is temporarily unavailable" }, 503);
+  }
+
+  const location = gateway.gateway.location;
+  const latitude = location?.latitude == null ? Number.NaN : Number(location.latitude);
+  const longitude = location?.longitude == null ? Number.NaN : Number(location.longitude);
+  const gatewayLocation = Number.isFinite(latitude) && Number.isFinite(longitude)
+    ? { latitude, longitude }
+    : null;
+  const startedAt = new Date().toISOString();
+  const session: CoverageSession = {
+    type: "coverage-session",
+    sid: randomId(),
+    orgId: org.tenantId,
+    // Session JWT payloads are signed, not encrypted; keep email/PII out.
+    createdBy: me.id,
+    devEui,
+    gatewayId,
+    gatewayName: gateway.gateway.name || undefined,
+    gatewayLocation,
+    startedAt,
+    expectedIntervalSeconds,
+    // Two missed transmissions plus a small delivery/processing grace period.
+    lostAfterSeconds: expectedIntervalSeconds * 2 + 30,
+    initialCursor,
+  };
+  const id = jwt.sign(session, SECRET, { expiresIn: "24h", audience: COVERAGE_AUDIENCE });
+  return c.json({ session: publicCoverageSession(id, session) }, 201);
+});
+
+app.get("/coverage-sessions/:id/events", async (c) => {
+  const session = decodeCoverageSession(c.req.param("id"));
+  if (!session) return c.json({ error: "coverage session not found or expired" }, 404);
+  const org = await orgOf(authUser(c)!);
+  if (session.orgId !== org.tenantId) return c.json({ error: "coverage session not found" }, 404);
+
+  const requestedAfter = c.req.query("after");
+  const parsedAfter = requestedAfter == null ? session.initialCursor : normalizedCursor(requestedAfter);
+  if (parsedAfter == null) return c.json({ error: "after must be a non-negative integer cursor" }, 400);
+  // A client may retry an earlier cursor, but a session can never read radio
+  // events from before its signed starting cursor.
+  const after = maxCursor(parsedAfter, session.initialCursor);
+  const rawLimit = c.req.query("limit") ?? "100";
+  const limit = Number(rawLimit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) return c.json({ error: "limit must be between 1 and 500" }, 400);
+
+  let from: string | null = null;
+  const requestedFrom = c.req.query("from");
+  if (requestedFrom) {
+    const t = Date.parse(requestedFrom);
+    if (Number.isNaN(t)) return c.json({ error: "from must be an ISO-8601 timestamp" }, 400);
+    const normalizedFrom = new Date(t).toISOString();
+    from = normalizedFrom > session.startedAt ? normalizedFrom : session.startedAt;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      device: session.devEui,
+      gateway: session.gatewayId,
+      after,
+      limit: String(limit),
+    });
+    // The starting cursor is authoritative and immune to clock skew. A time
+    // lower bound is added only when the client explicitly asks for one.
+    if (from) params.set("from", from);
+    const feed = await coverageFeed(params);
+    const items = (Array.isArray(feed.items) ? feed.items : [])
+      // Defense in depth: never trust an internal response to broaden the
+      // organization-scoped device/gateway pair fixed by the signed session.
+      .filter(x => String(x.devEui).toLowerCase() === session.devEui && String(x.gatewayId).toLowerCase() === session.gatewayId)
+      .map(x => ({
+        cursor: normalizedCursor(x.cursor) ?? "0",
+        timestamp: x.timestamp ?? null,
+        devEui: session.devEui,
+        gatewayId: session.gatewayId,
+        rssi: x.rssi ?? null,
+        snr: x.snr ?? null,
+        fCnt: x.fCnt ?? null,
+        frequency: x.frequency ?? null,
+        bandwidth: x.bandwidth ?? null,
+        spreadingFactor: x.spreadingFactor ?? null,
+        codeRate: x.codeRate ?? null,
+      }));
+    const feedCursor = maxCursor(normalizedCursor(feed.nextCursor) ?? after, after);
+    const nextCursor = items.length ? maxCursor(items[items.length - 1].cursor, feedCursor) : feedCursor;
+    return c.json({ items, nextCursor, hasMore: Boolean(feed.hasMore) });
+  } catch (e) {
+    console.error("coverage events failed:", e);
+    return c.json({ error: "Coverage telemetry is temporarily unavailable" }, 503);
+  }
+});
+
+app.post("/coverage-sessions/:id/stop", async (c) => {
+  const id = c.req.param("id");
+  const session = decodeCoverageSession(id);
+  if (!session) return c.json({ error: "coverage session not found or expired" }, 404);
+  const org = await orgOf(authUser(c)!);
+  if (session.orgId !== org.tenantId) return c.json({ error: "coverage session not found" }, 404);
+  return c.json({ session: { ...publicCoverageSession(id, session), stoppedAt: new Date().toISOString() } });
+});
+
 // ---------- downlink commands ----------
 // Real command bytes from Milesight's own encoder scripts (SensorDecoders repo).
 // Classic AM/CT/EM/WS use channel 0xff; the newer GS series uses single-byte codes.
@@ -649,10 +990,15 @@ function commandsFor(typeName: string): Command[] {
   const n = (typeName || "").toLowerCase();
   const cmds: Command[] = [];
   if (n.includes("gs601") || /\bgs\d/.test(n)) {
-    cmds.push({ id: "buzzer", label: "Sound the buzzer", description: "Beeps the detector once — a live proof it's working and reachable.", fPort: 85, bytes: "1101" });
+    // 0x63 buzzer_enable. NOT 0x11: that is the UPLINK channel the device uses to
+    // report its own buzzer state, so queueing it as a downlink is accepted, delivered
+    // and silently ignored by the hardware. Milesight publishes no "beep once" downlink
+    // for this model, so a momentary-sound button cannot be honest here.
+    cmds.push({ id: "buzzer_on", label: "Buzzer on", description: "Lets the detector sound its alarm when it detects vaping. This is a setting, not a test beep — it makes no sound now.", fPort: 85, bytes: "6301" });
+    cmds.push({ id: "buzzer_off", label: "Buzzer off", description: "Silences the alarm buzzer. It stays silent until you turn it back on.", fPort: 85, bytes: "6300" });
     cmds.push({ id: "led_on", label: "LED on", description: "Turn the status light on.", fPort: 85, bytes: "6201" });
     cmds.push({ id: "led_off", label: "LED off", description: "Turn the status light off.", fPort: 85, bytes: "6200" });
-    cmds.push({ id: "reboot", label: "Reboot", description: "Restart the device.", fPort: 85, bytes: "be", disruptive: true });
+    cmds.push({ id: "reboot", label: "Reboot", description: "Restarts the device. It rejoins on its own, so this is the honest way to prove a detector is alive and reachable.", fPort: 85, bytes: "be", disruptive: true });
     return cmds;
   }
   if (n.includes("milesight")) {
@@ -695,14 +1041,245 @@ app.post("/devices/:eui/commands/reporting-interval", async (c) => {
   try {
     const org = await orgOf(authUser(c)!);
     const eui = c.req.param("eui").toLowerCase();
-    if (!(await ownedDevice(eui, org))) return c.json({ error: "not found" }, 404);
+    const d = await ownedDevice(eui, org);
+    if (!d) return c.json({ error: "not found" }, 404);
     const { minutes } = await c.req.json();
-    const secs = Math.max(60, Math.min(64800, Math.round(Number(minutes) * 60)));
-    // Milesight downlink: channel 0xFF, type 0x03, uint16 LE seconds, fPort 85
-    const payload = Buffer.from([0xff, 0x03, secs & 0xff, (secs >> 8) & 0xff]);
+    const mins = Math.max(1, Math.min(1440, Math.round(Number(minutes))));
+    const profile = await profileInfo(d.device.deviceProfileId);
+    const typeName = profile.name;
+    const n = typeName.toLowerCase();
+    // The interval downlink is NOT one command across Milesight families — verified
+    // against their published encoders (sending the wrong family's bytes is accepted,
+    // delivered and silently ignored, exactly like the 0x11 buzzer bug):
+    //   GS601:            60 01 <uint16LE minutes>      (gs601-encoder.js)
+    //   CT10x v2:         ff 8e 00 <uint16LE minutes>   (ct101-v2-encoder.js)
+    //   AM/EM/WS classic: ff 03 <uint16LE seconds>      (am308-encoder.js)
+    let payload: Buffer;
+    if (n.includes("gs601") || /\bgs\d/.test(n)) {
+      payload = Buffer.from([0x60, 0x01, mins & 0xff, (mins >> 8) & 0xff]);
+    } else if (/\bct1\d/.test(n) || n.includes("current transformer")) {
+      payload = Buffer.from([0xff, 0x8e, 0x00, mins & 0xff, (mins >> 8) & 0xff]);
+    } else if (n.includes("milesight")) {
+      const secs = Math.min(64800, mins * 60);
+      payload = Buffer.from([0xff, 0x03, secs & 0xff, (secs >> 8) & 0xff]);
+    } else {
+      // Custom/DIY type: we don't know its downlink protocol. Refuse loudly rather
+      // than queue bytes the device will ignore while the UI reports success.
+      return c.json({ error: "This device type has no known reporting-interval command. Set the interval on the device itself." }, 400);
+    }
+    const existing = savedDeviceConfig(org.tenantId, eui);
+    if (existing?.reportingIntervalMinutes === mins) {
+      if (existing.reportingIntervalStatus === "applied") {
+        return c.json({
+          queued: false,
+          minutes: mins,
+          status: "applied",
+          requestedAt: existing.reportingIntervalRequestedAt,
+          confirmedAt: existing.reportingIntervalConfirmedAt ?? null,
+          note: `${mins} minutes is already applied on this sensor.`,
+        });
+      }
+      return c.json({
+        queued: true,
+        minutes: mins,
+        status: "pending",
+        requestedAt: existing.reportingIntervalRequestedAt,
+        note: `${mins} minutes is already queued. The console will confirm it from the sensor's observed uplink cadence.`,
+      });
+    }
     await cs("POST", `/api/devices/${eui}/queue`, { queueItem: { fPort: 85, confirmed: false, data: payload.toString("base64") } });
-    return c.json({ queued: true, note: "Queued. Class A sensors apply it at their next check-in (up to one reporting interval)." });
+    // Ask the device to report its configuration after applying the change.
+    // These are queued behind the setter, so a Class-A sensor normally receives
+    // the setter on one uplink and the verification request on the next.
+    const verifyPayload = n.includes("gs601") || /\bgs\d/.test(n)
+      ? Buffer.from([0xee])             // GS: report all configurations
+      : Buffer.from([0xff, 0x28, 0xff]); // classic Milesight: report status
+    try {
+      await cs("POST", `/api/devices/${eui}/queue`, { queueItem: { fPort: 85, confirmed: false, data: verifyPayload.toString("base64") } });
+    } catch (error) {
+      console.error(`Could not queue interval verification for ${eui}:`, error);
+    }
+    const requestedAt = new Date().toISOString();
+    const config: DeviceConfig = {
+      devEui: eui,
+      orgId: org.tenantId,
+      reportingIntervalMinutes: mins,
+      reportingIntervalStatus: "pending",
+      reportingIntervalRequestedAt: requestedAt,
+    };
+    const db = store.get();
+    db.deviceConfigs ??= [];
+    const index = db.deviceConfigs.findIndex(item => item.orgId === org.tenantId && item.devEui === eui);
+    if (index >= 0) db.deviceConfigs[index] = config;
+    else db.deviceConfigs.push(config);
+    save();
+    return c.json({
+      queued: true,
+      minutes: mins,
+      status: "pending",
+      requestedAt,
+      note: `Saved and queued ${mins} minutes. It will remain pending until the sensor reports that it applied the setting.`,
+    });
   } catch (e) { return err400(c, e, "Could not queue the command"); }
+});
+
+// ---------- Community Hub Data Hub integration ----------
+// Contract: docs.communityhub.cloud/guides/sources/fieldline-lorawan
+// We push CSV readings to them; they pull sensor metadata from the endpoint below.
+const CH_METADATA_SECRET = process.env.CH_METADATA_SECRET ?? "";
+// The environment variable keeps its name from before the rename; the server sets it.
+const DEFAULT_TZ = process.env.FIELDLINE_DEFAULT_TZ ?? "America/New_York";
+
+// 30 chars, [0-9a-zA-Z] only, per the spec.
+const TOKEN_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+function randomDeviceToken(): string {
+  const bytes = crypto.randomBytes(30);
+  let out = "";
+  for (let i = 0; i < 30; i++) out += TOKEN_ALPHABET[bytes[i] % TOKEN_ALPHABET.length];
+  return out;
+}
+/** Get-or-create the permanent token for a sensor. Never regenerates an existing one. */
+function deviceTokenFor(devEui: string, orgId: string): DeviceToken {
+  const db = store.get();
+  db.deviceTokens ??= [];
+  const eui = devEui.toLowerCase();
+  let rec = db.deviceTokens.find(t => t.devEui === eui);
+  if (!rec) {
+    let token = randomDeviceToken();
+    while (db.deviceTokens.some(t => t.token === token)) token = randomDeviceToken();
+    rec = { devEui: eui, orgId, token, timeZone: DEFAULT_TZ, createdAt: new Date().toISOString() };
+    db.deviceTokens.push(rec); save();
+  }
+  return rec;
+}
+
+// Data Hub cannot infer units or meaning from raw values, so every key a decoder can
+// emit needs a declared unit and variableType ("instantaneous" | "totalizer" | "average rate").
+type MeasurementDef = { name: string; unit: string; variableType: "instantaneous" | "totalizer" | "average rate" };
+const MEASUREMENTS: Record<string, MeasurementDef> = {
+  temperature:            { name: "Temperature", unit: "°C", variableType: "instantaneous" },
+  celsius_temperature:    { name: "Temperature", unit: "°C", variableType: "instantaneous" },
+  fahrenheit_temperature: { name: "Temperature (F)", unit: "°F", variableType: "instantaneous" },
+  humidity:               { name: "Relative humidity", unit: "%", variableType: "instantaneous" },
+  pressure:               { name: "Barometric pressure", unit: "hPa", variableType: "instantaneous" },
+  co2:                    { name: "Carbon dioxide", unit: "ppm", variableType: "instantaneous" },
+  tvoc:                   { name: "Total VOC index", unit: "", variableType: "instantaneous" },
+  pm1_0:                  { name: "Particulate matter 1.0", unit: "µg/m³", variableType: "instantaneous" },
+  pm2_5:                  { name: "Particulate matter 2.5", unit: "µg/m³", variableType: "instantaneous" },
+  pm10:                   { name: "Particulate matter 10", unit: "µg/m³", variableType: "instantaneous" },
+  vaping_index:           { name: "Vaping index", unit: "", variableType: "instantaneous" },
+  light_level:            { name: "Light level", unit: "", variableType: "instantaneous" },
+  battery:                { name: "Battery", unit: "%", variableType: "instantaneous" },
+  current:                { name: "Current", unit: "A", variableType: "instantaneous" },
+  current_max:            { name: "Current maximum", unit: "A", variableType: "instantaneous" },
+  current_min:            { name: "Current minimum", unit: "A", variableType: "instantaneous" },
+  total_current:          { name: "Cumulative current", unit: "Ah", variableType: "totalizer" },
+  total_energy:           { name: "Total energy", unit: "kWh", variableType: "totalizer" },
+  ch1_sumkwh:             { name: "Total energy", unit: "kWh", variableType: "totalizer" },
+  voltage:                { name: "Voltage", unit: "V", variableType: "instantaneous" },
+  power_factor:           { name: "Power factor", unit: "", variableType: "instantaneous" },
+  distance:               { name: "Distance", unit: "mm", variableType: "instantaneous" },
+  soil_moisture:          { name: "Soil moisture", unit: "%", variableType: "instantaneous" },
+  do_ppm:                 { name: "Dissolved oxygen", unit: "mg/L", variableType: "instantaneous" },
+  do_mv:                  { name: "Dissolved oxygen (raw)", unit: "mV", variableType: "instantaneous" },
+  // status-ish keys: strings are treated as instantaneous by Data Hub
+  pir:                    { name: "Motion", unit: "", variableType: "instantaneous" },
+  occupancy_status:       { name: "Occupancy", unit: "", variableType: "instantaneous" },
+  tamper_status:          { name: "Tamper", unit: "", variableType: "instantaneous" },
+  buzzer:                 { name: "Buzzer state", unit: "", variableType: "instantaneous" },
+  water_leak:             { name: "Water leak", unit: "", variableType: "instantaneous" },
+  door_open:              { name: "Door open", unit: "", variableType: "instantaneous" },
+};
+function measurementDef(key: string): MeasurementDef {
+  return MEASUREMENTS[key] ?? { name: key.replace(/_/g, " ").replace(/^./, c => c.toUpperCase()), unit: "", variableType: "instantaneous" };
+}
+/** "Milesight CT103 - Current transformer" -> manufacturer + model */
+function splitProfileName(profileName: string): { manufacturer?: string; model?: string } {
+  const head = (profileName || "").split(" - ")[0].trim();
+  const parts = head.split(/\s+/);
+  if (parts.length >= 2) return { manufacturer: parts[0], model: parts.slice(1).join(" ") };
+  return head ? { model: head } : {};
+}
+
+// Data Hub pulls this at device-creation time to learn what the sensor measures.
+// Authenticated with a dedicated read-only secret, deliberately NOT the org-token.
+app.get("/integrations/community-hub/devices/:token/metadata", async (c) => {
+  if (!CH_METADATA_SECRET) return c.json({ error: "metadata integration not configured" }, 503);
+  const auth = c.req.header("authorization") ?? "";
+  const presented = auth.replace(/^Bearer\s+/i, "");
+  const ok = presented.length === CH_METADATA_SECRET.length &&
+    crypto.timingSafeEqual(Buffer.from(presented), Buffer.from(CH_METADATA_SECRET));
+  if (!ok) return c.json({ error: "unauthorized" }, 401);
+
+  const token = c.req.param("token");
+  const rec = (store.get().deviceTokens ?? []).find(t => t.token === token);
+  if (!rec) return c.json({ error: "unknown device token" }, 404);
+
+  try {
+    const org = await tenantInfo(rec.orgId);
+    const dev = (await cs<any>("GET", `/api/devices/${rec.devEui}`));
+    const d = dev.device ?? {};
+    let profileName = "";
+    try { profileName = (await cs<any>("GET", `/api/device-profiles/${d.deviceProfileId}`)).deviceProfile.name; } catch { /* optional */ }
+
+    // Measurement keys come from what this sensor has actually reported.
+    let keys: string[] = [];
+    let battery: number | null = null;
+    try {
+      const r = await fetch(`${READINGS_URL}?device=${rec.devEui}&latest=1`);
+      const j: any = await r.json();
+      const latest = Array.isArray(j?.items) ? j.items[0] : j?.latest ?? j;
+      const meas = latest?.measurements ?? latest?.data ?? {};
+      keys = Object.keys(meas).sort();
+      if (typeof meas.battery === "number") battery = meas.battery;
+    } catch { /* a sensor that has never reported simply has no measurements yet */ }
+
+    const lastSeenAt = dev.lastSeenAt ?? null;
+    const fresh = lastSeenAt && Date.now() - new Date(lastSeenAt).getTime() < 2 * 60 * 60 * 1000;
+    return c.json({
+      schemaVersion: "1.0",
+      deviceToken: rec.token,
+      devEui: rec.devEui,
+      name: d.name ?? rec.devEui,
+      ...splitProfileName(profileName),
+      timeZone: rec.timeZone,
+      location: { organization: org.tenantName },
+      measurements: keys.map(k => ({ key: k, ...measurementDef(k) })),
+      operationalStatus: {
+        status: !lastSeenAt ? "never seen" : fresh ? "online" : "offline",
+        batteryPercent: battery,
+        lastSeenAt,
+      },
+    });
+  } catch (e) { return err400(c, e, "Could not build metadata for this device"); }
+});
+
+// Operator view of the permanent tokens (admins only). Creates any that are missing.
+app.get("/integrations/community-hub/tokens", async (c) => {
+  const me = authUser(c); if (!me) return c.json({ error: "unauthorized" }, 401);
+  if (me.role !== "admin") return c.json({ error: "admins only" }, 403);
+  const org = await orgOf(me);
+  const euis = [...(await orgEuis(org.appId))];
+  const items = euis.map(eui => {
+    const t = deviceTokenFor(eui, org.tenantId);
+    return { devEui: t.devEui, deviceToken: t.token, timeZone: t.timeZone, createdAt: t.createdAt };
+  });
+  return c.json({ items });
+});
+
+// Per-sensor IANA time zone. Data Hub buckets rollups on local days, so this matters.
+app.patch("/integrations/community-hub/devices/:eui/timezone", async (c) => {
+  const me = authUser(c); if (!me) return c.json({ error: "unauthorized" }, 401);
+  if (me.role !== "admin") return c.json({ error: "admins only" }, 403);
+  const org = await orgOf(me);
+  const eui = c.req.param("eui").toLowerCase();
+  if (!(await ownedDevice(eui, org))) return c.json({ error: "not found" }, 404);
+  const { timeZone } = await c.req.json();
+  try { new Intl.DateTimeFormat("en-US", { timeZone }); }
+  catch { return c.json({ error: "timeZone must be an IANA name, e.g. America/New_York" }, 400); }
+  const rec = deviceTokenFor(eui, org.tenantId);
+  rec.timeZone = timeZone; save();
+  return c.json({ devEui: eui, timeZone });
 });
 
 // ---------- alerts (computed, org-scoped) ----------
@@ -716,11 +1293,17 @@ async function computeAlerts(tenantId: string, appId: string): Promise<Alert[]> 
   ]);
   const alerts: Alert[] = [];
   for (const g of gws.result ?? []) {
-    if (g.lastSeenAt && statusFrom(g.lastSeenAt) === "offline")
+    if (g.lastSeenAt && gatewayStatusFrom(g.lastSeenAt) === "offline")
       alerts.push({ id: `gw:${g.gatewayId}`, type: "gateway_offline", target: g.name, message: `${g.name} has not connected since ${new Date(g.lastSeenAt).toLocaleString()}`, time: g.lastSeenAt });
   }
+  const uniqueProfileIds = [...new Set<string>((devs.result ?? []).map((d: any) => d.deviceProfileId))];
+  const profileEntries = await Promise.all(uniqueProfileIds.map(async id => [id, await profileInfo(id)] as const));
+  const profiles = new Map(profileEntries);
   for (const d of devs.result ?? []) {
-    if (d.lastSeenAt && Date.now() - new Date(d.lastSeenAt).getTime() > 2 * 3600e3)
+    const profile = profiles.get(d.deviceProfileId) ?? { name: d.deviceProfileName ?? "", uplinkInterval: 3600 };
+    const config = savedDeviceConfig(tenantId, d.devEui);
+    const health = sensorHealth(d.lastSeenAt ?? null, expectedInterval(config, profile), !d.isDisabled);
+    if (d.lastSeenAt && health.status === "offline")
       alerts.push({ id: `dev:${d.devEui}`, type: "sensor_offline", target: d.name, message: `${d.name} last reported ${new Date(d.lastSeenAt).toLocaleString()}`, time: d.lastSeenAt });
     const st = states[d.devEui] ?? {};
     const b = battery(d) ?? st.battery ?? null;

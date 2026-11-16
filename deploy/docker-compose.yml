@@ -28,6 +28,10 @@ services:
       - DATA_PATH=/data/lorawan.json
       - PLATFORM_ADMINS=admin
       - PUBLIC_HOST=your.server.ip
+      # Community Hub Data Hub integration: Data Hub sends this secret when it
+      # pulls sensor metadata. Leave it empty to turn that route off.
+      - CH_METADATA_SECRET=
+      - FIELDLINE_DEFAULT_TZ=America/New_York
       # optional onboarding emails (Resend, verified domain)
       - RESEND_API_KEY=
       - MAIL_FROM=LoRaWAN <lorawan@yourdomain.com>
@@ -54,6 +58,48 @@ services:
       - DB_PATH=/data/readings.db
     depends_on:
       - mosquitto
+
+  # Optional: posts each new reading as CSV to DATAHUB_URL, for the sensors
+  # listed in DEVICE_TOKENS ({"<devEui>": "<token>"}). Idle while that is empty.
+  datahub-pusher:
+    image: python:3.12-slim
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    command: sh -c "pip install --quiet --root-user-action=ignore paho-mqtt==1.6.1 && python /app/app.py"
+    volumes:
+      - ../services/datahub-pusher:/app
+      - pusherdata:/data
+    environment:
+      - MQTT_HOST=mosquitto
+      - MQTT_USER=chirpstack
+      - MQTT_PASS=change-me
+      - DATAHUB_URL=
+      - DEVICE_TOKENS={}
+    depends_on:
+      - mosquitto
+
+  # Optional: uploads every sensor that has a Community Hub device token to
+  # Data Hub, oldest readings first. It reads the datastore's SQLite file and
+  # the backend's JSON store from their volumes. Idle until CH_UPLOAD_URL and
+  # CH_ORG_TOKEN are set.
+  fieldline-push:
+    image: python:3.12-slim
+    restart: unless-stopped
+    command: sh -c "python /app/fieldline_push.py"
+    volumes:
+      - ../services/datahub-pusher:/app
+      - pusherdata:/data
+      - datastorevol:/readings
+      - backendvol:/backend
+    environment:
+      - CH_UPLOAD_URL=
+      - CH_ORG_TOKEN=
+      - CH_INTERVAL=180
+      - FIELDLINE_STORE=/backend/lorawan.json
 
   chirpstack:
     image: chirpstack/chirpstack:4
@@ -107,6 +153,7 @@ services:
 
 volumes:
   backendvol:
+  pusherdata:
   datastorevol:
   caddydata:
   caddyconfig:
