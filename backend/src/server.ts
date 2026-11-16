@@ -1,4 +1,4 @@
-// Lorawan backend v3: multi-tenant. Each organization (school) maps to one
+// LoRaWAN backend v3: multi-tenant. Each organization (school) maps to one
 // ChirpStack tenant; users carry orgId and every endpoint is scoped to the
 // caller's org. Platform admins (the operator) onboard new orgs with POST
 // /orgs, which creates the tenant, its application, clones the sensor-type
@@ -25,6 +25,8 @@ const PLATFORM_ADMINS = (process.env.PLATFORM_ADMINS ?? "admin").split(",").map(
 const app = new Hono();
 // Browser CORS restricted to our own front-ends. The public data API is
 // machine-to-machine (x-api-key), so it isn't affected by this.
+// The two *.vercel.app hosts are the live deployments' original addresses from
+// before the product was renamed; they stay allowed until those projects move.
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS ??
   "https://lorawan-sensors.communityhb.tech,https://admin.lorawan-sensors.communityhb.tech,https://fieldline-tau.vercel.app,https://fieldline-admin.vercel.app,http://localhost:3000,http://localhost:3100").split(",");
 app.use("*", cors({ origin: (o) => (o && ALLOWED_ORIGINS.includes(o) ? o : ""), credentials: false }));
@@ -81,9 +83,11 @@ async function tenantInfo(tenantId: string): Promise<Org> {
   const hit = orgCache.get(tenantId);
   if (hit && Date.now() - hit.at < 60_000) return hit.org;
   const t = (await cs<any>("GET", `/api/tenants/${tenantId}`)).tenant;
+  // An org's application is found by tenant, never by name, so orgs created before
+  // the rename (whose application is named "fieldline") keep working as they are.
   let apps = (await cs<any>("GET", `/api/applications?limit=1&tenantId=${tenantId}`)).result ?? [];
   if (!apps.length) {
-    const created = await cs<any>("POST", "/api/applications", { application: { name: "fieldline", tenantId, description: "Created by Lorawan" } });
+    const created = await cs<any>("POST", "/api/applications", { application: { name: "lorawan", tenantId, description: "Created by the LoRaWAN console" } });
     apps = [{ id: created.id }];
   }
   const org = { tenantId, tenantName: t.name, appId: apps[0].id };
@@ -325,6 +329,8 @@ type CoverageSession = {
   initialCursor: string;
 };
 type CoverageFeed = { items?: any[]; nextCursor?: string | number; hasMore?: boolean };
+// Kept from before the rename: changing it would invalidate every coverage
+// session token already handed out.
 const COVERAGE_AUDIENCE = "fieldline-coverage";
 
 function normalizedCursor(value: unknown): string | null {
@@ -382,12 +388,12 @@ app.post("/orgs", async (c) => {
     if (db.users.some(u => u.email === email)) return c.json({ error: "A user with this email already exists" }, 400);
     // 1. tenant
     const tid = (await cs<any>("POST", "/api/tenants", { tenant: {
-      name: orgName, description: "Created by Lorawan",
+      name: orgName, description: "Created by the LoRaWAN console",
       canHaveGateways: true, maxGatewayCount: 0, maxDeviceCount: 0,
       privateGatewaysUp: true, privateGatewaysDown: true,
     } })).id;
     // 2. application
-    await cs("POST", "/api/applications", { application: { name: "fieldline", tenantId: tid, description: "Created by Lorawan" } });
+    await cs("POST", "/api/applications", { application: { name: "lorawan", tenantId: tid, description: "Created by the LoRaWAN console" } });
     // 3. clone the sensor-type catalog from the template (first) tenant
     const template = await defaultTenant();
     const profiles = (await cs<any>("GET", `/api/device-profiles?limit=100&tenantId=${template}`)).result ?? [];
@@ -543,7 +549,7 @@ app.post("/gateways", async (c) => {
     await cs("POST", "/api/gateways", { gateway: {
       gatewayId: String(eui).toLowerCase(), name, tenantId: org.tenantId, statsInterval: 30,
       downlinkPriority: 1, // ChirpStack rejects creates without it (undocumented)
-      description: "Registered via Lorawan",
+      description: "Registered via the LoRaWAN console",
       location: location ? { latitude: location.lat, longitude: location.lng } : undefined,
     } });
     return c.json({
@@ -578,6 +584,13 @@ app.delete("/gateways/:eui", async (c) => {
 // short TTL; invalidated on create. 13 upstream calls per load -> ~zero.
 const typeCache = new Map<string, { items: unknown[]; at: number }>();
 const TYPE_TTL = 60_000;
+// Default description for a custom type. Types made before the product was renamed
+// were saved with older wording, so that wording is swapped when read back.
+const TYPE_DESCRIPTION = "Custom device type created in the LoRaWAN console";
+const LEGACY_TYPE_DESCRIPTIONS = new Set([
+  "Custom device type created via Fieldline",
+  "Custom device type created via Lorawan",
+]);
 app.get("/device-types", async (c) => {
   const org = await orgOf(authUser(c)!);
   const hit = typeCache.get(org.tenantId);
@@ -586,7 +599,7 @@ app.get("/device-types", async (c) => {
   const items = await Promise.all((r.result ?? []).map(async (p: any) => {
     const full = (await cs<any>("GET", `/api/device-profiles/${p.id}`)).deviceProfile;
     const meas = Object.values(full.measurements ?? {}).map((m: any) => ({ name: m.name, unit: "" }));
-    return { id: p.id, name: p.name, region: full.region, lorawanVersion: full.macVersion, class: full.supportsClassC ? "C" : "A", measurements: meas, hasDecoder: Boolean(full.payloadCodecScript), description: full.description ?? "" };
+    return { id: p.id, name: p.name, region: full.region, lorawanVersion: full.macVersion, class: full.supportsClassC ? "C" : "A", measurements: meas, hasDecoder: Boolean(full.payloadCodecScript), description: LEGACY_TYPE_DESCRIPTIONS.has(full.description) ? TYPE_DESCRIPTION : full.description ?? "" };
   }));
   typeCache.set(org.tenantId, { items, at: Date.now() });
   return c.json({ items });
@@ -594,7 +607,7 @@ app.get("/device-types", async (c) => {
 // Starter decoder for custom/DIY devices: passes raw bytes through so the
 // device shows up with SOMETHING, and documents how to write a real one.
 const STARTER_DECODER = `// ChirpStack v4 decoder. Return { data: {...} } — each key becomes a
-// measurement shown in Lorawan (e.g. temperature, do_ppm, battery).
+// measurement shown in the console (e.g. temperature, do_ppm, battery).
 function decodeUplink(input) {
   var b = input.bytes; // array of payload bytes from your device
   return {
@@ -620,7 +633,7 @@ app.post("/device-types", async (c) => {
       macVersion, regParamsRevision: macVersion === "LORAWAN_1_0_4" ? "RP002_1_0_3" : "A",
       supportsOtaa: true, supportsClassC: body.class === "C",
       uplinkInterval: 1200, adrAlgorithmId: "default",
-      description: body.description || "Custom device type created via Lorawan",
+      description: body.description || TYPE_DESCRIPTION,
       payloadCodecRuntime: "JS",
       payloadCodecScript: decoder || STARTER_DECODER,
     } });
@@ -738,7 +751,7 @@ app.post("/devices", async (c) => {
     } else {
       appKey = randomHex(16); keySource = "generated";
     }
-    await cs("POST", "/api/devices", { device: { devEui, name, applicationId: org.appId, deviceProfileId: typeId, description: "Created via Lorawan" } });
+    await cs("POST", "/api/devices", { device: { devEui, name, applicationId: org.appId, deviceProfileId: typeId, description: "Created via the LoRaWAN console" } });
     // LoRaWAN 1.0.x: the AppKey must go in the nwkKey field (ChirpStack quirk)
     await cs("POST", `/api/devices/${devEui}/keys`, { deviceKeys: { devEui, nwkKey: appKey, appKey: "" } });
     euiCache.delete(org.appId);
@@ -1071,7 +1084,7 @@ app.post("/devices/:eui/commands/reporting-interval", async (c) => {
         minutes: mins,
         status: "pending",
         requestedAt: existing.reportingIntervalRequestedAt,
-        note: `${mins} minutes is already queued. Lorawan will confirm it from the sensor's observed uplink cadence.`,
+        note: `${mins} minutes is already queued. The console will confirm it from the sensor's observed uplink cadence.`,
       });
     }
     await cs("POST", `/api/devices/${eui}/queue`, { queueItem: { fPort: 85, confirmed: false, data: payload.toString("base64") } });
@@ -1114,6 +1127,7 @@ app.post("/devices/:eui/commands/reporting-interval", async (c) => {
 // Contract: docs.communityhub.cloud/guides/sources/fieldline-lorawan
 // We push CSV readings to them; they pull sensor metadata from the endpoint below.
 const CH_METADATA_SECRET = process.env.CH_METADATA_SECRET ?? "";
+// The environment variable keeps its name from before the rename; the server sets it.
 const DEFAULT_TZ = process.env.FIELDLINE_DEFAULT_TZ ?? "America/New_York";
 
 // 30 chars, [0-9a-zA-Z] only, per the spec.
@@ -1465,7 +1479,7 @@ app.post("/integrations/test", async (c) => {
   const b = await c.req.json();
   if (b.type && b.type !== "webhook") return c.json({ error: "Webhook delivery is live today; other destination types are on the roadmap." }, 400);
   try { await assertPublicUrl(b.endpoint ?? ""); } catch (e) { return c.json({ error: (e as Error).message }, 400); }
-  const res = await deliver(b, { event: "integration.test", source: "fieldline", time: new Date().toISOString(), device: { eui: "24e124aabbccddee", name: "Sample sensor" }, measurements: { temperature: 22.5, humidity: 41.2 } });
+  const res = await deliver(b, { event: "integration.test", source: "lorawan", time: new Date().toISOString(), device: { eui: "24e124aabbccddee", name: "Sample sensor" }, measurements: { temperature: 22.5, humidity: 41.2 } });
   if (!res.ok) return c.json({ error: res.status ? `Endpoint answered HTTP ${res.status}` : "Endpoint unreachable (connection failed or timed out)" }, 400);
   return c.json({ ok: true, latencyMs: res.ms, message: `Endpoint answered HTTP ${res.status}` });
 });
@@ -1474,7 +1488,7 @@ app.post("/integrations/:id/test", async (c) => {
   const dflt = await defaultTenant();
   const i = store.get().integrations.find(x => x.id === c.req.param("id") && (x.orgId ?? dflt) === org.tenantId);
   if (!i) return c.json({ error: "not found" }, 404);
-  const res = await deliver(i, { event: "integration.test", source: "fieldline", time: new Date().toISOString(), device: { eui: "24e124aabbccddee", name: "Sample sensor" }, measurements: { temperature: 22.5, humidity: 41.2 } });
+  const res = await deliver(i, { event: "integration.test", source: "lorawan", time: new Date().toISOString(), device: { eui: "24e124aabbccddee", name: "Sample sensor" }, measurements: { temperature: 22.5, humidity: 41.2 } });
   if (!res.ok) return c.json({ error: res.status ? `Endpoint answered HTTP ${res.status}` : "Endpoint unreachable" }, 400);
   return c.json({ ok: true, latencyMs: res.ms, message: `Endpoint answered HTTP ${res.status}` });
 });
@@ -1520,4 +1534,4 @@ setInterval(async () => {
 app.get("/health", (c) => c.json({ ok: true }));
 
 serve({ fetch: app.fetch, port: PORT });
-console.log(`Lorawan backend v3 (multi-tenant) on http://localhost:${PORT}`);
+console.log(`LoRaWAN backend v3 (multi-tenant) on http://localhost:${PORT}`);

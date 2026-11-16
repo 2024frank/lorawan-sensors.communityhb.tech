@@ -1,5 +1,8 @@
 """
-Fieldline -> Community Hub Data Hub uploader.
+LoRaWAN console -> Community Hub Data Hub uploader.
+
+The file, service, log prefix and FIELDLINE_STORE setting keep the product's old
+name so the server running this needs no changes.
 
 Contract: docs.communityhub.cloud/guides/sources/fieldline-lorawan
   POST <CH_UPLOAD_URL>
